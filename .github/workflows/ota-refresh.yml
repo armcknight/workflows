@@ -1,0 +1,89 @@
+name: OTA refresh (reusable)
+
+# Re-sign a PR's staging OTA install link without rebuilding. The caller wires
+# the trigger (issue_comment '/refresh-staging' and/or workflow_dispatch) and
+# passes the PR number.
+#
+# Caller requirements: repo vars AWS_ROLE_ARN/AWS_REGION/S3_BUCKET;
+# permissions: pull-requests: write, id-token: write.
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        description: "PR number whose staging link to refresh"
+        required: true
+        type: string
+      run-id:
+        description: "Specific stage run id (optional; defaults to the PR's latest build)"
+        required: false
+        type: string
+      comment-id:
+        description: "Comment id to react to (optional; from the /refresh-staging comment)"
+        required: false
+        type: string
+
+jobs:
+  refresh:
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      pull-requests: write
+      id-token: write
+    env:
+      LINK_TTL_SECONDS: "43200"
+
+    steps:
+    - name: Acknowledge command
+      if: inputs.comment-id != ''
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        COMMENT_ID: ${{ inputs.comment-id }}
+      run: |
+        gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+          -f content=eyes --silent || true
+
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        role-duration-seconds: ${{ env.LINK_TTL_SECONDS }}
+
+    - name: Install ota-publish
+      run: brew install armcknight/tools/tools
+
+    - name: Re-sign OTA link and comment on PR
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        S3_BUCKET: ${{ vars.S3_BUCKET }}
+        AWS_REGION: ${{ vars.AWS_REGION }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        RUN_ID_INPUT: ${{ inputs.run-id }}
+      run: |
+        PROJECT="${GITHUB_REPOSITORY##*/}"
+        RUN_ID="$RUN_ID_INPUT"
+        if [ -z "$RUN_ID" ]; then
+          RUN_ID=$(aws s3 ls "s3://$S3_BUCKET/$PROJECT/pr-$PR_NUMBER/" \
+            | awk '{print $2}' | grep '^run-' | sed 's#run-##; s#/##' | sort -V | tail -1)
+        fi
+        if [ -z "$RUN_ID" ]; then
+          echo "No staging builds found for PR #$PR_NUMBER under $PROJECT/." >&2
+          exit 1
+        fi
+
+        RESULT=$(ota-publish \
+          --mode refresh \
+          --bucket "$S3_BUCKET" \
+          --region "$AWS_REGION" \
+          --project "$PROJECT" \
+          --pr "$PR_NUMBER" \
+          --run-id "$RUN_ID" \
+          --ttl "$LINK_TTL_SECONDS")
+        LANDING=$(echo "$RESULT" | jq -r '.landingUrl')
+        EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
+
+        printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
+          "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
+
+        gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md

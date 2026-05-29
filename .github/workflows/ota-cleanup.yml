@@ -1,0 +1,32 @@
+name: OTA cleanup (reusable)
+
+# Delete a PR's staging builds from S3 when it closes. Caller triggers on
+# pull_request: closed and needs repo vars AWS_ROLE_ARN/AWS_REGION/S3_BUCKET
+# and permissions: id-token: write.
+
+on:
+  workflow_call: {}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+
+    steps:
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Delete this PR's staging builds from S3
+      env:
+        S3_BUCKET: ${{ vars.S3_BUCKET }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        PROJECT="${GITHUB_REPOSITORY##*/}"
+        PREFIX="$PROJECT/pr-$PR_NUMBER/"
+        echo "Removing s3://$S3_BUCKET/$PREFIX"
+        aws s3 rm "s3://$S3_BUCKET/$PREFIX" --recursive

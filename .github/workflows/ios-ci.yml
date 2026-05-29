@@ -1,0 +1,164 @@
+name: iOS CI (reusable)
+
+# Reusable PR pipeline for armcknight iOS apps: run tests, then (only if tests
+# pass) build an ad-hoc staging IPA and publish a presigned OTA install link.
+#
+# Caller requirements:
+#   - repo variables: AWS_ROLE_ARN, AWS_REGION, S3_BUCKET
+#   - secrets (via `secrets: inherit`): MATCH_PASSWORD, MATCH_DEPLOY_KEY
+#   - a fastlane `test` lane and a `stage` lane that outputs <ipa-name>.ipa
+#   - Brewfile taps armcknight/tools (provides ota-publish, xcodegen, etc.)
+#   - caller grants permissions: contents: read, checks: write,
+#     pull-requests: write, id-token: write
+
+on:
+  workflow_call:
+    inputs:
+      ipa-name:
+        description: "Base name of the staging IPA from `fastlane stage` (without .ipa)"
+        required: true
+        type: string
+      arkana-env:
+        description: "key=value lines written to .env before `arkana` (CI stubs)"
+        required: true
+        type: string
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3.0'
+        bundler-cache: true
+
+    - name: Install Homebrew dependencies
+      run: brew bundle
+
+    - name: Generate Xcode project
+      env:
+        ARKANA_ENV: ${{ inputs.arkana-env }}
+      run: |
+        printf '%s\n' "$ARKANA_ENV" > .env
+        bundle exec arkana
+        xcodegen
+
+    - name: Run tests
+      run: bundle exec fastlane ios test
+      env:
+        CI: true
+
+    - name: Publish Test Report
+      uses: mikepenz/action-junit-report@v5
+      if: always()
+      with:
+        report_paths: "fastlane/test_output/junit.xml"
+        check_name: "Test Results"
+        fail_on_failure: true
+        detailed_summary: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results
+        path: fastlane/test_output
+        retention-days: 7
+
+  stage:
+    name: Stage
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    env:
+      # Lifetime of both the assumed-role session and the presigned install link.
+      LINK_TTL_SECONDS: "43200"
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3.0'
+        bundler-cache: true
+
+    - name: Install Homebrew dependencies
+      run: brew bundle
+
+    - name: Generate Xcode project
+      env:
+        ARKANA_ENV: ${{ inputs.arkana-env }}
+      run: |
+        printf '%s\n' "$ARKANA_ENV" > .env
+        bundle exec arkana
+        xcodegen
+
+    - name: Install match SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "$MATCH_DEPLOY_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+      env:
+        MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
+
+    - name: Build ad-hoc IPA
+      run: bundle exec fastlane ios stage
+      env:
+        MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        role-duration-seconds: ${{ env.LINK_TTL_SECONDS }}
+
+    - name: Publish OTA build to S3 and comment on PR
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        S3_BUCKET: ${{ vars.S3_BUCKET }}
+        AWS_REGION: ${{ vars.AWS_REGION }}
+        PROJECT: ${{ github.event.repository.name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        RUN_ID: ${{ github.run_id }}
+        SHA: ${{ github.event.pull_request.head.sha }}
+        IPA_NAME: ${{ inputs.ipa-name }}
+      run: |
+        RESULT=$(ota-publish \
+          --mode initial \
+          --ipa "${IPA_NAME}.ipa" \
+          --bucket "$S3_BUCKET" \
+          --region "$AWS_REGION" \
+          --project "$PROJECT" \
+          --pr "$PR_NUMBER" \
+          --run-id "$RUN_ID" \
+          --ttl "$LINK_TTL_SECONDS")
+        LANDING=$(echo "$RESULT" | jq -r '.landingUrl')
+        EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
+        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+
+        printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed._\n' \
+          "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
+
+        gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
