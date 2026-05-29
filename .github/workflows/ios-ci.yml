@@ -28,6 +28,12 @@ on:
         type: boolean
         default: true
 
+env:
+  # gym's `xcodebuild -showBuildSettings` can exceed the 3s default on projects
+  # with many SPM/submodule dependencies; give it room.
+  FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "120"
+  FASTLANE_XCODEBUILD_SETTINGS_RETRIES: "10"
+
 jobs:
   test:
     name: Test
@@ -57,6 +63,10 @@ jobs:
       env:
         ARKANA_ENV: ${{ inputs.arkana-env }}
       run: |
+        # Materialize gitignored config files (e.g. .envrc) from committed
+        # templates so xcodegen fileGroups validate. The arkana .env is written
+        # fresh below regardless.
+        for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
         printf '%s\n' "$ARKANA_ENV" > .env
         bundle exec arkana
         xcodegen
@@ -118,6 +128,10 @@ jobs:
       env:
         ARKANA_ENV: ${{ inputs.arkana-env }}
       run: |
+        # Materialize gitignored config files (e.g. .envrc) from committed
+        # templates so xcodegen fileGroups validate. The arkana .env is written
+        # fresh below regardless.
+        for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
         printf '%s\n' "$ARKANA_ENV" > .env
         bundle exec arkana
         xcodegen
