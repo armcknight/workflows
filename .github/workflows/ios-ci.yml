@@ -32,7 +32,7 @@ jobs:
   test:
     name: Test
     if: inputs.run-tests
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 10
     permissions:
       contents: read
@@ -89,7 +89,7 @@ jobs:
     # never when they failed.
     needs: test
     if: ${{ !cancelled() && needs.test.result != 'failure' }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 10
     permissions:
       contents: read
