@@ -22,10 +22,16 @@ on:
         description: "key=value lines written to .env before `arkana` (CI stubs)"
         required: true
         type: string
+      run-tests:
+        description: "Run the fastlane `test` lane before staging. Set false for apps with no unit-test scheme."
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   test:
     name: Test
+    if: inputs.run-tests
     runs-on: macos-15
     timeout-minutes: 10
     permissions:
@@ -79,7 +85,10 @@ jobs:
 
   stage:
     name: Stage
+    # Run after tests pass — or when tests were skipped (run-tests: false) — but
+    # never when they failed.
     needs: test
+    if: ${{ !cancelled() && needs.test.result != 'failure' }}
     runs-on: macos-15
     timeout-minutes: 10
     permissions:
