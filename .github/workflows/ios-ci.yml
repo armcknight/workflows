@@ -61,7 +61,10 @@ jobs:
 
     - name: Generate Xcode project
       env:
-        ARKANA_ENV: ${{ inputs.arkana-env }}
+        # Real arkana secrets come from the caller repo's ARKANA_ENV secret
+        # (via `secrets: inherit`); the arkana-env input is a compile-only stub
+        # fallback for repos that haven't set the secret yet.
+        ARKANA_ENV: ${{ secrets.ARKANA_ENV || inputs.arkana-env }}
       run: |
         # Materialize gitignored config files (e.g. .envrc) from committed
         # templates so xcodegen fileGroups validate. The arkana .env is written
@@ -126,7 +129,10 @@ jobs:
 
     - name: Generate Xcode project
       env:
-        ARKANA_ENV: ${{ inputs.arkana-env }}
+        # Real arkana secrets come from the caller repo's ARKANA_ENV secret
+        # (via `secrets: inherit`); the arkana-env input is a compile-only stub
+        # fallback for repos that haven't set the secret yet.
+        ARKANA_ENV: ${{ secrets.ARKANA_ENV || inputs.arkana-env }}
       run: |
         # Materialize gitignored config files (e.g. .envrc) from committed
         # templates so xcodegen fileGroups validate. The arkana .env is written
