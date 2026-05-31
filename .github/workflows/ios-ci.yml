@@ -61,16 +61,30 @@ jobs:
 
     - name: Generate Xcode project
       env:
-        # Real arkana secrets come from the caller repo's ARKANA_ENV secret
-        # (via `secrets: inherit`); the arkana-env input is a compile-only stub
-        # fallback for repos that haven't set the secret yet.
-        ARKANA_ENV: ${{ secrets.ARKANA_ENV || inputs.arkana-env }}
+        # Per-app arkana values, sourced from the caller repo's Actions secrets
+        # (passed via `secrets: inherit`). Each is written to .env only when set,
+        # so app-specific keys (e.g. CloudKitContainerID, the dough IAP/keychain
+        # trio) are optional — absent for repos that don't use them. To support a
+        # new arkana key, add it to this env block and the loop below.
+        SentryDSN: ${{ secrets.SentryDSN }}
+        FeedbackEmail: ${{ secrets.FeedbackEmail }}
+        CloudKitContainerID: ${{ secrets.CloudKitContainerID }}
+        CreateEditIAP: ${{ secrets.CreateEditIAP }}
+        KeychainAccount: ${{ secrets.KeychainAccount }}
+        KeychainIAPKey: ${{ secrets.KeychainIAPKey }}
+        # Compile-only stub fallback used only if none of the above are set.
+        ARKANA_STUB: ${{ inputs.arkana-env }}
       run: |
         # Materialize gitignored config files (e.g. .envrc) from committed
-        # templates so xcodegen fileGroups validate. The arkana .env is written
-        # fresh below regardless.
+        # templates so xcodegen fileGroups validate.
         for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        printf '%s\n' "$ARKANA_ENV" > .env
+        # Build .env from whichever arkana secrets this repo has set.
+        : > .env
+        for kv in "SentryDSN=$SentryDSN" "FeedbackEmail=$FeedbackEmail" "CloudKitContainerID=$CloudKitContainerID" "CreateEditIAP=$CreateEditIAP" "KeychainAccount=$KeychainAccount" "KeychainIAPKey=$KeychainIAPKey"; do
+          [ -n "${kv#*=}" ] && printf '%s\n' "$kv" >> .env
+        done
+        # Fall back to the compile-only stub if no real secrets are set yet.
+        [ -s .env ] || printf '%s\n' "$ARKANA_STUB" > .env
         bundle exec arkana
         xcodegen
 
@@ -129,16 +143,30 @@ jobs:
 
     - name: Generate Xcode project
       env:
-        # Real arkana secrets come from the caller repo's ARKANA_ENV secret
-        # (via `secrets: inherit`); the arkana-env input is a compile-only stub
-        # fallback for repos that haven't set the secret yet.
-        ARKANA_ENV: ${{ secrets.ARKANA_ENV || inputs.arkana-env }}
+        # Per-app arkana values, sourced from the caller repo's Actions secrets
+        # (passed via `secrets: inherit`). Each is written to .env only when set,
+        # so app-specific keys (e.g. CloudKitContainerID, the dough IAP/keychain
+        # trio) are optional — absent for repos that don't use them. To support a
+        # new arkana key, add it to this env block and the loop below.
+        SentryDSN: ${{ secrets.SentryDSN }}
+        FeedbackEmail: ${{ secrets.FeedbackEmail }}
+        CloudKitContainerID: ${{ secrets.CloudKitContainerID }}
+        CreateEditIAP: ${{ secrets.CreateEditIAP }}
+        KeychainAccount: ${{ secrets.KeychainAccount }}
+        KeychainIAPKey: ${{ secrets.KeychainIAPKey }}
+        # Compile-only stub fallback used only if none of the above are set.
+        ARKANA_STUB: ${{ inputs.arkana-env }}
       run: |
         # Materialize gitignored config files (e.g. .envrc) from committed
-        # templates so xcodegen fileGroups validate. The arkana .env is written
-        # fresh below regardless.
+        # templates so xcodegen fileGroups validate.
         for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        printf '%s\n' "$ARKANA_ENV" > .env
+        # Build .env from whichever arkana secrets this repo has set.
+        : > .env
+        for kv in "SentryDSN=$SentryDSN" "FeedbackEmail=$FeedbackEmail" "CloudKitContainerID=$CloudKitContainerID" "CreateEditIAP=$CreateEditIAP" "KeychainAccount=$KeychainAccount" "KeychainIAPKey=$KeychainIAPKey"; do
+          [ -n "${kv#*=}" ] && printf '%s\n' "$kv" >> .env
+        done
+        # Fall back to the compile-only stub if no real secrets are set yet.
+        [ -s .env ] || printf '%s\n' "$ARKANA_STUB" > .env
         bundle exec arkana
         xcodegen
 
