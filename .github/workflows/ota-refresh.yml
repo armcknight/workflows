@@ -56,6 +56,10 @@ jobs:
     - name: Re-sign OTA link and comment on PR
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # This job has no checkout, so point gh at the repo explicitly;
+        # otherwise `gh pr comment` shells out to git and fails with
+        # "not a git repository".
+        GH_REPO: ${{ github.repository }}
         S3_BUCKET: ${{ vars.S3_BUCKET }}
         AWS_REGION: ${{ vars.AWS_REGION }}
         PR_NUMBER: ${{ inputs.pr-number }}
