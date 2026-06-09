@@ -18,8 +18,8 @@ on:
         description: "Base name of the staging IPA from `fastlane stage` (without .ipa)"
         required: true
         type: string
-      arkana-env:
-        description: "Full key=value .env contents for arkana, composed by the caller from its own secrets"
+      arkana-keys:
+        description: "Space-separated arkana secret key names to materialize into .env. Values are resolved from the caller's secrets (via `secrets: inherit`); arkana fails the build if a declared key is missing."
         required: true
         type: string
       run-tests:
@@ -61,15 +61,24 @@ jobs:
 
     - name: Generate Xcode project
       env:
-        # The caller owns the secret-to-arkana-key mapping and composes the full
-        # .env contents (failing if a required secret is missing), keeping this
-        # workflow app-agnostic. Passed in verbatim.
-        ARKANA_ENV: ${{ inputs.arkana-env }}
+        # The caller names the arkana keys it needs (inputs.arkana-keys); their
+        # values come from the caller's own secrets via `secrets: inherit`. This
+        # keeps the workflow app-agnostic — it knows no specific key names. arkana
+        # hard-fails if a key declared in the app's .arkana.yml is absent, so a
+        # missing secret fails the build loudly (no silent stubs).
+        ALL_SECRETS: ${{ toJSON(secrets) }}
+        ARKANA_KEYS: ${{ inputs.arkana-keys }}
       run: |
         # Materialize gitignored config files (e.g. .envrc) from committed
         # templates so xcodegen fileGroups validate.
         for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        printf '%s\n' "$ARKANA_ENV" > .env
+        # Resolve each requested key from the inherited secrets (case-insensitive,
+        # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
+        : > .env
+        for key in $ARKANA_KEYS; do
+          val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
+          [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
+        done
         bundle exec arkana
         xcodegen
 
@@ -133,15 +142,24 @@ jobs:
 
     - name: Generate Xcode project
       env:
-        # The caller owns the secret-to-arkana-key mapping and composes the full
-        # .env contents (failing if a required secret is missing), keeping this
-        # workflow app-agnostic. Passed in verbatim.
-        ARKANA_ENV: ${{ inputs.arkana-env }}
+        # The caller names the arkana keys it needs (inputs.arkana-keys); their
+        # values come from the caller's own secrets via `secrets: inherit`. This
+        # keeps the workflow app-agnostic — it knows no specific key names. arkana
+        # hard-fails if a key declared in the app's .arkana.yml is absent, so a
+        # missing secret fails the build loudly (no silent stubs).
+        ALL_SECRETS: ${{ toJSON(secrets) }}
+        ARKANA_KEYS: ${{ inputs.arkana-keys }}
       run: |
         # Materialize gitignored config files (e.g. .envrc) from committed
         # templates so xcodegen fileGroups validate.
         for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        printf '%s\n' "$ARKANA_ENV" > .env
+        # Resolve each requested key from the inherited secrets (case-insensitive,
+        # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
+        : > .env
+        for key in $ARKANA_KEYS; do
+          val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
+          [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
+        done
         bundle exec arkana
         xcodegen
 
