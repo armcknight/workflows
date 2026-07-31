@@ -6,6 +6,11 @@ name: OTA refresh (reusable)
 #
 # Caller requirements: repo vars AWS_ROLE_ARN/AWS_REGION/S3_BUCKET;
 # permissions: pull-requests: write, id-token: write.
+#
+# The caller must also gate its `issue_comment` trigger on the commenter's
+# author_association (see README), because a refresh mints a presigned install
+# link. This workflow re-checks the association itself, so a caller that forgets
+# the gate fails closed instead of serving links to any commenter.
 
 on:
   workflow_call:
@@ -34,6 +39,20 @@ jobs:
       LINK_TTL_SECONDS: "43200"
 
     steps:
+    # Defense in depth: the caller is told to gate the `issue_comment` trigger on
+    # the commenter, but enforce it here too, because this job assumes the AWS
+    # role and mints a presigned link to the build. A caller that forgets the
+    # gate must not become a way for any commenter to get an install link.
+    - name: Check that the commenter can write to the repo
+      if: github.event_name == 'issue_comment'
+      env:
+        ASSOCIATION: ${{ github.event.comment.author_association }}
+      run: |
+        case "$ASSOCIATION" in
+          OWNER|MEMBER|COLLABORATOR) echo "Commenter is $ASSOCIATION; continuing." ;;
+          *) echo "Commenter is $ASSOCIATION, which cannot write to this repo. Refusing to refresh." >&2; exit 1 ;;
+        esac
+
     - name: Acknowledge command
       if: inputs.comment-id != ''
       env:

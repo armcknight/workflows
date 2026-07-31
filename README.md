@@ -86,9 +86,14 @@ permissions:
   id-token: write
 jobs:
   refresh:
+    # Gate on the commenter, not only on the command text: the job mints a
+    # presigned install link for the build, so only persons who can write to the
+    # repo may trigger it. `workflow_dispatch` is already write-gated by GitHub.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/refresh-staging'))
+      (github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/refresh-staging') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     uses: armcknight/workflows/.github/workflows/ota-refresh.yml@main
     with:
       pr-number: ${{ github.event.issue.number || inputs.pr_number }}
@@ -119,6 +124,10 @@ jobs:
   the user account."
 - Installs are **ad-hoc**: a tester's device UDID must be in the `match adhoc`
   provisioning profile.
+- `ota-refresh.yml` re-checks `author_association` itself on `issue_comment`
+  events, so a caller that omits the `if:` gate above fails closed instead of
+  giving any commenter an install link. Keep the gate in the caller anyway — it
+  stops the job before it assumes the AWS role.
 - `issue_comment` and `workflow_run` triggers always run the **default-branch**
   copy of the *caller's* workflow, so `/refresh-staging` only works once the
   caller's workflow is on its default branch.
