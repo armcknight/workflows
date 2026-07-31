@@ -27,6 +27,21 @@ wrap in an `install.html` landing page → emit a link) is done by the
 
 S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run-<id>/`.
 
+### Inputs
+
+`ios-ci.yml`:
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `ipa-name` | yes | Base name of the IPA produced by `fastlane stage`, without `.ipa`. |
+| `arkana-keys` | yes | Space-separated arkana key **names**. Values are resolved from the caller's secrets by name, so no secret values pass through `with:`. |
+| `run-tests` | no (`true`) | Run the fastlane `test` lane first. Set `false` for apps with no unit-test scheme. |
+
+`ota-refresh.yml`: `pr-number` (required), `run-id` (optional — defaults to the
+PR's newest build), `comment-id` (optional — the comment to react to).
+
+`ota-cleanup.yml`: no inputs.
+
 ## Caller requirements
 
 **Repo variables** (read from the caller automatically — `vars` propagate into
@@ -37,6 +52,10 @@ reusable workflows; only secrets need `inherit`):
 
 **Repo secrets** (passed with `secrets: inherit`):
 - `MATCH_PASSWORD`, `MATCH_DEPLOY_KEY` — fastlane match repo decryption + SSH read key
+- one secret per name listed in `arkana-keys`. The match is case-insensitive, so
+  the secret `SENTRYDSN` satisfies the arkana key `SentryDSN`. arkana hard-fails
+  when a key declared in the app's `.arkana.yml` has no value, so a missing
+  secret fails the build loudly — there are no silent stub builds.
 
 **In-repo build setup** the workflow invokes:
 - a fastlane `test` lane and a `stage` lane that outputs `<ipa-name>.ipa`
@@ -64,9 +83,9 @@ jobs:
     uses: armcknight/workflows/.github/workflows/ios-ci.yml@main
     with:
       ipa-name: MyApp-staging
-      arkana-env: |
-        SentryDSN=https://stub@sentry.io/0
-        FeedbackEmail=stub@example.com
+      # Key names only — never values. Each name resolves to a same-named repo
+      # secret (case-insensitive) inside the reusable workflow.
+      arkana-keys: SentryDSN FeedbackEmail
     secrets: inherit
 ```
 
@@ -119,9 +138,12 @@ jobs:
 
 ## Notes
 
-- These are referenced from private repos, so this repo's
-  Settings → Actions → Access is set to "Accessible from repositories owned by
-  the user account."
+- These are referenced from private repos. While this repo is private, its
+  Settings → Actions → Access must be "Accessible from repositories owned by the
+  user account." A public repo's reusable workflows are callable by anyone, so
+  that setting no longer applies — nothing here is secret, and a caller supplies
+  its own `vars` and `secrets`, so it gets its own S3 bucket and IAM role, never
+  these.
 - Installs are **ad-hoc**: a tester's device UDID must be in the `match adhoc`
   provisioning profile.
 - `ota-refresh.yml` re-checks `author_association` itself on `issue_comment`
