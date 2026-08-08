@@ -176,6 +176,11 @@ jobs:
           # Materialize gitignored config files (e.g. .envrc) from committed
           # templates so xcodegen fileGroups validate.
           for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
+          # A project.yml that lists .env as a file group fails xcodegen spec
+          # validation when the file is absent, and .env is always gitignored, so
+          # it never exists on a runner. Create it unconditionally — an empty one
+          # is enough to validate, and the arkana block below fills it in.
+          touch .env
           if [ -n "${ARKANA_KEYS// /}" ]; then
             # Resolve each requested key from the inherited secrets (case-insensitive,
             # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
