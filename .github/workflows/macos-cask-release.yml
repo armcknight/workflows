@@ -68,6 +68,10 @@ on:
         description: "Apple Developer Portal team ID that owns the signing certificate."
         required: true
         type: string
+      app-identifier:
+        description: "The app's bundle identifier. match requires it even with skip_provisioning_profiles, though it goes unused here."
+        required: true
+        type: string
       project:
         description: "Path to the .xcodeproj. Defaults to <scheme>.xcodeproj."
         required: false
@@ -232,6 +236,7 @@ jobs:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_GIT_URL: ${{ inputs.match-git-url }}
           TEAM_ID: ${{ inputs.team-id }}
+          APP_IDENTIFIER: ${{ inputs.app-identifier }}
           FASTLANE_SKIP_UPDATE_CHECK: "1"
           LC_ALL: en_US.UTF-8
           LANG: en_US.UTF-8
@@ -254,7 +259,9 @@ jobs:
           # readonly: read the cert out of the match repo and make no Apple API
           # calls, so no Apple credentials are needed here. skip_provisioning_
           # profiles: a non-sandboxed hardened-runtime app needs no profile, and
-          # asking for one would require a registered App ID.
+          # asking for one would require a registered App ID. app_identifier is
+          # still required — match validates the option even when it skips
+          # profiles, and fails with "No value found for 'app_identifier'".
           bundle exec fastlane run match \
             type:developer_id \
             platform:macos \
@@ -262,6 +269,7 @@ jobs:
             skip_provisioning_profiles:true \
             git_url:"$MATCH_GIT_URL" \
             team_id:"$TEAM_ID" \
+            app_identifier:"$APP_IDENTIFIER" \
             keychain_name:"$KEYCHAIN_NAME" \
             keychain_password:"$KEYCHAIN_PASSWORD"
           IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')"

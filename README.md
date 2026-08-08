@@ -56,6 +56,7 @@ PR's newest build), `comment-id` (optional — the comment to react to).
 | `cask-name` | yes | Cask base name in the tap (`Casks/<cask-name>.rb`). Also the prefix of the tap release and its asset. |
 | `match-git-url` | yes | SSH URL of the fastlane match repo holding the Developer ID cert. |
 | `team-id` | yes | Apple Developer Portal team that owns that cert. Checked against the cert match hands back. |
+| `app-identifier` | yes | The app's bundle id. Unused for signing, but `match` validates the option even with `skip_provisioning_profiles` and fails without it. |
 | `project` | no (`<scheme>.xcodeproj`) | Path to the `.xcodeproj`. |
 | `version-xcconfig` | no (none) | xcconfig whose `MARKETING_VERSION` is stamped from the tag. Omit to leave the version alone. |
 | `arkana-keys` | no (none) | Space-separated arkana key **names**, same resolution as `ios-ci.yml`. |
@@ -241,6 +242,7 @@ jobs:
       version-xcconfig: config/MyApp.xcconfig
       match-git-url: git@github.com:armcknight/fastlane-match.git
       team-id: ABCDE12345
+      app-identifier: com.example.MyApp
       arkana-keys: SentryDSN
     secrets: inherit
 ```
