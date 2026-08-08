@@ -1,0 +1,42 @@
+name: Swift package CI (reusable)
+
+# Reusable build + test for SwiftPM packages. Callers trigger on push / PR and
+# delegate here, so every Swift package repo gets identical CI:
+#
+#   jobs:
+#     ci:
+#       uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@main
+#
+# Override `runs-on` or pass extra flags if a repo needs them.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "Runner label."
+        required: false
+        type: string
+        default: "macos-15"
+      build-args:
+        description: "Extra arguments appended to `swift build`."
+        required: false
+        type: string
+        default: ""
+      test-args:
+        description: "Extra arguments appended to `swift test`."
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: swift build ${{ inputs.build-args }}
+
+      - name: Test
+        run: swift test ${{ inputs.test-args }}
