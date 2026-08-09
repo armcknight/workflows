@@ -8,7 +8,8 @@ name: macOS cask release (reusable)
 #   2. signs it with a Developer ID Application certificate (hardened runtime),
 #   3. notarizes it with notarytool and staples the ticket,
 #   4. zips it and attaches the zip to a release on the *tap* repo — so the cask
-#      URL is publicly downloadable even when the source repo is private,
+#      URL is publicly downloadable even when the source repo is private (and
+#      keeps working unchanged if that repo later goes public),
 #   5. bumps `version` + `sha256` in `Casks/<cask-name>.rb` in the tap and pushes.
 #
 # Signing and notarization are mandatory. Homebrew quarantines every cask
@@ -433,6 +434,10 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ steps.ver.outputs.version }}
           generate_release_notes: true
+          # Attach the same zip here too. The cask always pulls from the tap, but
+          # a public source repo's releases page is where people actually land —
+          # an assetless release there is a dead end for anyone not using brew.
+          files: ${{ steps.package.outputs.path }}
 
       - name: Bump cask in tap repo
         env:

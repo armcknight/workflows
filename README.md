@@ -140,7 +140,10 @@ A cask URL is fetched by `brew` with no credentials. Release assets on a private
 repo need auth, so a private app's zip can't live on its own repo's release. The
 tap repo is public, so the workflow creates a `<cask-name>-<version>` release
 *there* and attaches the zip to it — same trick `armcknight/tools` uses for its
-binaries.
+binaries. This keeps working whether the source repo is private or public, so the
+cask never has to change when visibility does. The zip is *also* attached to the
+source repo's own release, since that is where people land when the source is
+public.
 
 ### Why signing is not optional
 
@@ -249,11 +252,15 @@ jobs:
 
 ## Notes
 
-- These are referenced from private repos. While this repo is private, its
-  Settings → Actions → Access must be "Accessible from repositories owned by the
-  user account." A public repo's reusable workflows are callable by anyone, so
-  that setting no longer applies — nothing here is secret, and a caller supplies
-  its own `vars` and `secrets`, so it gets its own S3 bucket and IAM role, never
+- Callers are a mix of private (`mtg`, …) and public (`claude-squad`) repos.
+  While this repo is private, its Settings → Actions → Access must be "Accessible
+  from repositories owned by the user account." **Unverified:** whether that
+  setting covers a *public* caller calling into this private repo. `claude-squad`
+  is the first public caller, so if its release run fails at startup with a
+  workflow-not-found error, that is why — the fix is to make this repo public,
+  which is safe: nothing here is secret, and a caller supplies its own `vars` and
+  `secrets`. A public repo's reusable workflows are callable by anyone, so that
+  access setting no longer applies — a caller gets its own S3 bucket and IAM role, never
   these.
 - Installs are **ad-hoc**: a tester's device UDID must be in the `match adhoc`
   provisioning profile.
