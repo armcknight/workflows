@@ -1,0 +1,117 @@
+name: Claude plugin release (reusable)
+
+# Reusable release pipeline for Claude Code plugin marketplaces, e.g.
+# armcknight/claude-armcknight.
+#
+# On a version tag in the caller repo, this workflow:
+#   1. validates the plugin and marketplace manifests with the Claude Code CLI,
+#   2. checks the tag agrees with the `version` in the plugin manifest,
+#   3. creates a GitHub release with changelog-derived notes.
+#
+# There is nothing to build, sign or upload. Claude Code installs a plugin by
+# cloning the marketplace repo and tracking its default branch — the clone's
+# refspec is `+refs/heads/main:refs/remotes/origin/main`, so tags are never even
+# fetched. What reaches a user's machine is whatever `plugin.json` on the default
+# branch says. The tag is bookkeeping; the version bump is the release.
+#
+# That is also why step 2 matters. If the tag moves and the manifest version does
+# not, every existing install silently stays put: `claude plugin update` compares
+# version strings, sees no change, and does nothing.
+#
+# Caller requirements:
+#   - trigger on a version tag push (`X.Y.Z`, optionally with an RC suffix)
+#   - `permissions: contents: write` (to create the release)
+#   - a CHANGELOG.md with a section for the version being released
+#
+#   jobs:
+#     release:
+#       permissions:
+#         contents: write
+#       uses: armcknight/workflows/.github/workflows/claude-plugin-release.yml@main
+#       with:
+#         plugin-path: plugins/my-plugin
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "Runner label."
+        required: false
+        type: string
+        default: "macos-15"
+      plugin-path:
+        description: "Directory holding the plugin, i.e. the parent of .claude-plugin/plugin.json."
+        required: true
+        type: string
+      marketplace-path:
+        description: "Directory holding the marketplace, i.e. the parent of .claude-plugin/marketplace.json."
+        required: false
+        type: string
+        default: "."
+      changelog:
+        description: "Path to the changelog used for release notes."
+        required: false
+        type: string
+        default: "CHANGELOG.md"
+      prerelease:
+        description: "Mark the GitHub release as a prerelease."
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  release:
+    name: Validate and release
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # prepare-github-release reads the changelog section for the tag, and
+          # needs the tag's history to resolve it.
+          fetch-depth: 0
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      # Validates both manifests: required keys, the marketplace's plugin
+      # entries resolving to real directories, and each command's frontmatter
+      # parsing as YAML. A command whose frontmatter fails to parse still loads
+      # at runtime, silently, with empty metadata — so this is the only place
+      # that failure is visible.
+      - name: Validate plugin manifest
+        run: claude plugin validate "${{ inputs.plugin-path }}"
+
+      - name: Validate marketplace manifest
+        run: claude plugin validate "${{ inputs.marketplace-path }}"
+
+      # The tag is the release's name, but the manifest version is what users
+      # actually receive. If they disagree, the release is a no-op for everyone.
+      - name: Check tag matches the manifest version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          MANIFEST="${{ inputs.plugin-path }}/.claude-plugin/plugin.json"
+          VERSION=$(jq -r .version "$MANIFEST")
+          # An RC tag like 0.1.1-rc.1 should match the manifest's base 0.1.1.
+          BASE="${TAG%%-*}"
+          if [ "$BASE" != "$VERSION" ]; then
+            echo "::error file=$MANIFEST::Manifest version ($VERSION) does not match base of tag ($TAG). Bump the manifest, or installs will not move."
+            exit 1
+          fi
+          echo "Tag $TAG agrees with manifest version $VERSION"
+
+      - name: Install armcknight/tools
+        run: |
+          set -euo pipefail
+          # Homebrew refuses to load formulae and casks from untrusted taps.
+          brew trust armcknight/tools
+          brew install --cask armcknight/tools/tools
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prepare-github-release "${GITHUB_REF_NAME}" \
+            --changelog "${{ inputs.changelog }}" \
+            ${{ inputs.prerelease && '--prerelease' || '' }}

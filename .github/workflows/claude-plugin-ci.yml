@@ -1,0 +1,49 @@
+name: Claude plugin CI (reusable)
+
+# Reusable validation for Claude Code plugin marketplaces. A plugin repo is
+# manifests and markdown, so validation is the whole of CI:
+#
+#   jobs:
+#     ci:
+#       uses: armcknight/workflows/.github/workflows/claude-plugin-ci.yml@main
+#       with:
+#         plugin-path: plugins/my-plugin
+#
+# Worth having because the failure it catches is silent. A command whose YAML
+# frontmatter does not parse — an unquoted value containing `:` or `[` is enough
+# — still loads at runtime with empty metadata, so its description and
+# argument-hint vanish with no error anywhere.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "Runner label."
+        required: false
+        type: string
+        default: "ubuntu-latest"
+      plugin-path:
+        description: "Directory holding the plugin, i.e. the parent of .claude-plugin/plugin.json."
+        required: true
+        type: string
+      marketplace-path:
+        description: "Directory holding the marketplace, i.e. the parent of .claude-plugin/marketplace.json."
+        required: false
+        type: string
+        default: "."
+
+jobs:
+  validate:
+    name: Validate manifests
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin manifest
+        run: claude plugin validate "${{ inputs.plugin-path }}"
+
+      - name: Validate marketplace manifest
+        run: claude plugin validate "${{ inputs.marketplace-path }}"
