@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [1.0.1] 2026-08-10
+
 ### Fixed
 
 - **swiftpm-cask-release**: authenticate the tap push with a git credential
