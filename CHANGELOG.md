@@ -23,6 +23,16 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [1.2.0] 2026-08-10
+
+### Added
+
+- **swift-package-ci** and **swiftpm-cask-release**: a `submodules` input,
+  passed straight to `actions/checkout`. A package whose dependencies are
+  vendored as git submodules (path-based SwiftPM deps) sets `submodules:
+  recursive` so the build can see them; the default (empty) is unchanged, so
+  existing callers are unaffected.
+
 ## [1.1.0] 2026-08-10
 
 ### Changed
