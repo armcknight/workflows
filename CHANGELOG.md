@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [1.1.0] 2026-08-10
+
 ### Changed
 
 - **swiftpm-cask-release**: the optional `sign` path now reads the Developer ID
