@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [1.2.0] 2026-08-10
+
 ### Added
 
 - **swift-package-ci** and **swiftpm-cask-release**: a `submodules` input,
