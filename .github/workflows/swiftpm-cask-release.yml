@@ -20,11 +20,12 @@ name: SwiftPM cask release (reusable)
 #   - secrets (via `secrets: inherit`): TAP_RELEASE_TOKEN — a fine-grained PAT
 #     with `Contents: read+write` on the tap repo. It creates the release there
 #     and pushes the cask bump.
-#   - with `sign: true`, also the `match-git-url` + `team-id` inputs and the
-#     secrets MATCH_PASSWORD, MATCH_DEPLOY_KEY, NOTARY_KEY, NOTARY_KEY_ID,
-#     NOTARY_ISSUER_ID. The Developer ID Application certificate is read from the
-#     fastlane match repo (readonly, same as macos-cask-release.yml). The
-#     workflow names a missing one rather than shipping an unsigned build.
+#   - with `sign: true`, also the `match-git-url`, `team-id` + `bundle-id`
+#     inputs and the secrets MATCH_PASSWORD, MATCH_DEPLOY_KEY, NOTARY_KEY,
+#     NOTARY_KEY_ID, NOTARY_ISSUER_ID. The Developer ID Application certificate
+#     is read from the fastlane match repo (readonly, same as
+#     macos-cask-release.yml). The workflow names a missing one rather than
+#     shipping an unsigned build.
 #   - `Casks/<cask-name>.rb` already committed to the tap. This workflow rewrites
 #     the version and sha256 lines; it never creates the file.
 #
@@ -72,6 +73,11 @@ on:
         default: ""
       team-id:
         description: "Apple Developer team ID that owns the signing certificate. Required when sign is true."
+        required: false
+        type: string
+        default: ""
+      bundle-id:
+        description: "Bundle identifier passed to fastlane match as app_identifier. match requires it even for a developer_id fetch with skip_provisioning_profiles, though it is unused for the team-wide certificate. Required when sign is true."
         required: false
         type: string
         default: ""
@@ -189,6 +195,7 @@ jobs:
         BINARIES: ${{ inputs.binaries }}
         MATCH_GIT_URL: ${{ inputs.match-git-url }}
         TEAM_ID: ${{ inputs.team-id }}
+        BUNDLE_ID: ${{ inputs.bundle-id }}
         MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
         MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
         NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
@@ -200,7 +207,7 @@ jobs:
       run: |
         set -euo pipefail
 
-        for name in MATCH_GIT_URL TEAM_ID MATCH_PASSWORD MATCH_DEPLOY_KEY NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+        for name in MATCH_GIT_URL TEAM_ID BUNDLE_ID MATCH_PASSWORD MATCH_DEPLOY_KEY NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
           if [ -z "${!name:-}" ]; then
             echo "::error::sign is true, so $name is required (the match-git-url/team-id input, or the secret behind it)."
             exit 1
@@ -233,11 +240,16 @@ jobs:
         # Apple credentials are needed to sign. The cert must already be in the
         # match repo (created once with `fastlane match developer_id`). Uses the
         # runner's preinstalled fastlane, so the caller needs no Gemfile.
+        # match requires app_identifier even for a developer_id fetch with
+        # skip_provisioning_profiles — it validates the option before it ever
+        # looks at profiles. The Developer ID Application cert is team-wide, so
+        # the value is unused; the caller supplies it via the bundle-id input.
         fastlane run match \
           type:developer_id \
           platform:macos \
           readonly:true \
           skip_provisioning_profiles:true \
+          app_identifier:"$BUNDLE_ID" \
           git_url:"$MATCH_GIT_URL" \
           team_id:"$TEAM_ID" \
           keychain_name:"$KEYCHAIN_NAME" \
