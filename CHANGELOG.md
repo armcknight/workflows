@@ -38,6 +38,16 @@ edit a caller applies.
   to the caller repo's own release, then bump `version` and `sha256` in the cask.
 - `swift-package-ci.yml` — `swift build` and `swift test` for SwiftPM packages,
   with a caller-chosen runner and extra arguments for each command.
+- `swiftpm-cask-release.yml` — reusable release pipeline for SwiftPM command-line
+  tools in the `armcknight/homebrew-tools` tap: check the tag against the version
+  compiled into the source, `swift build -c release`, tar the named executables,
+  attach the tarball to a release on the tap repo, then bump `version` and
+  `sha256` in the cask. A final tag routes to `Casks/<cask-name>.rb` and a release
+  candidate to `Casks/<cask-name>-rc.rb`, so an RC leaves the stable channel
+  alone. With `sign: true` it also Developer ID signs each binary in a throwaway
+  keychain and notarizes them; it does not staple, because `stapler` writes into
+  a bundle and these are bare executables. Factors out the near-identical inline
+  `release.yml` files in `armcknight/workr` and `armcknight/tools`.
 - `claude-plugin-ci.yml` — validate a Claude Code plugin manifest and its
   marketplace manifest on every PR.
 - `claude-plugin-release.yml` — validate both manifests, refuse a tag that

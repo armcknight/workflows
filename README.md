@@ -35,6 +35,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
 | `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package. |
+| `swiftpm-cask-release.yml` | `push` of a version tag | Build a SwiftPM CLI, optionally sign + notarize it, attach the tarball to a release on the tap repo, bump the cask. |
 | `claude-plugin-ci.yml` | `pull_request` | Validate a Claude Code plugin manifest and its marketplace manifest. |
 | `claude-plugin-release.yml` | `push` of a version tag | Validate both manifests, refuse a tag that disagrees with the plugin version, create the GitHub release. |
 
@@ -80,6 +81,45 @@ Outputs: `version`, `asset`, `sha256`.
 
 `swift-package-ci.yml`: `runs-on` (optional, `macos-15`), `build-args` and
 `test-args` (optional — appended to `swift build` and `swift test`).
+
+`swiftpm-cask-release.yml`:
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `cask-name` | yes | Cask base name in the tap (`Casks/<cask-name>.rb`). Also the prefix of the tap release and its asset. |
+| `binaries` | yes | Executables to take from `.build/release`, separated by spaces or newlines. |
+| `version-file` | no (none) | File holding the version compiled into the tool, checked against the tag. Omit to skip that check. |
+| `version-regex` | no (none) | `sed -E` expression with one capture group that reads the version out of `version-file`. Needed when `version-file` is set. |
+| `tap-repo` | no (`armcknight/homebrew-tools`) | Tap that hosts the cask and the release asset. |
+| `sign` | no (`false`) | Developer ID sign and notarize each binary before packaging. |
+| `runs-on` | no (`macos-15`) | Runner label. Must be macOS. |
+
+Secrets: `TAP_RELEASE_TOKEN` is always required. With `sign: true`, so are
+`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `NOTARY_KEY`,
+`NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` — GitHub cannot make a secret
+conditionally required, so the workflow names the missing one at run time rather
+than shipping an unsigned build.
+
+A final tag (`1.2.3`) routes to `Casks/<cask-name>.rb`; a release candidate
+(`1.2.3-rc.1`) routes to `Casks/<cask-name>-rc.rb`, so an RC never disturbs the
+stable channel. Signing is optional here, unlike `macos-cask-release.yml` where
+it is mandatory: Homebrew quarantines every cask download, but a `binary`
+artifact run from a shell does not face the Gatekeeper launch check a `.app`
+does. There is no stapling step — `stapler` writes a ticket into a bundle, a
+`.dmg` or a `.pkg`, and these are bare executables, so Gatekeeper looks the
+ticket up online instead.
+
+```yaml
+jobs:
+  release:
+    uses: armcknight/workflows/.github/workflows/swiftpm-cask-release.yml@1
+    with:
+      cask-name: work
+      binaries: work
+      version-file: Sources/work/CLI/Work.swift
+      version-regex: '.*static let version = "([^"]+)".*'
+    secrets: inherit
+```
 
 `claude-plugin-ci.yml` and `claude-plugin-release.yml`: `plugin-path` (required),
 `marketplace-path` (optional, `.`), `runs-on` (optional). `claude-plugin-release.yml`

@@ -1,0 +1,324 @@
+name: SwiftPM cask release (reusable)
+
+# Reusable release pipeline for armcknight SwiftPM command-line tools distributed
+# through the armcknight/homebrew-tools Homebrew tap.
+#
+# On a version tag in the caller repo, this workflow:
+#   1. checks the tag against the version compiled into the source,
+#   2. builds the release binaries with `swift build -c release`,
+#   3. optionally Developer ID signs and notarizes them (`sign: true`),
+#   4. tars them and attaches the tarball to a release on the *tap* repo — so the
+#      cask URL is downloadable with no credentials, whether or not the source
+#      repo is public,
+#   5. bumps `version` + `sha256` in `Casks/<cask-name>.rb` in the tap and pushes.
+#
+# A final tag (1.2.3) routes to `Casks/<cask-name>.rb`; a release candidate
+# (1.2.3-rc.1) routes to `Casks/<cask-name>-rc.rb`, so an RC never disturbs the
+# stable channel.
+#
+# Caller requirements:
+#   - secrets (via `secrets: inherit`): TAP_RELEASE_TOKEN — a fine-grained PAT
+#     with `Contents: read+write` on the tap repo. It creates the release there
+#     and pushes the cask bump.
+#   - with `sign: true`, also: DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD,
+#     NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER_ID. The workflow names the missing
+#     one rather than shipping an unsigned build.
+#   - `Casks/<cask-name>.rb` already committed to the tap. This workflow rewrites
+#     the version and sha256 lines; it never creates the file.
+#
+# Signing is optional here, unlike macos-cask-release.yml where it is mandatory.
+# Homebrew quarantines every cask download, but a `binary` artifact run from a
+# shell is not subject to the same Gatekeeper launch check a .app is, so an
+# unsigned CLI still works. Turn `sign` on for a tool that is executed by
+# something other than the user's shell.
+
+on:
+  workflow_call:
+    inputs:
+      cask-name:
+        description: "Cask file base name in the tap (Casks/<cask-name>.rb). Also the prefix of the tap release and its asset."
+        required: true
+        type: string
+      binaries:
+        description: "Executables to take from .build/release, separated by spaces or newlines."
+        required: true
+        type: string
+      version-file:
+        description: "File holding the version compiled into the tool, checked against the tag. Empty to skip that check."
+        required: false
+        type: string
+        default: ""
+      version-regex:
+        description: "sed -E expression with one capture group that pulls the version out of version-file, e.g. `.*static let version = \"([^\"]+)\".*`. Required when version-file is set."
+        required: false
+        type: string
+        default: ""
+      tap-repo:
+        description: "Tap that hosts the cask and the release asset."
+        required: false
+        type: string
+        default: "armcknight/homebrew-tools"
+      sign:
+        description: "Developer ID sign and notarize the binaries before packaging."
+        required: false
+        type: boolean
+        default: false
+      runs-on:
+        description: "Runner label. Must be macOS: this workflow signs, notarizes, and uses BSD sed."
+        required: false
+        type: string
+        default: "macos-15"
+    secrets:
+      TAP_RELEASE_TOKEN:
+        description: "Fine-grained PAT with Contents: read+write on the tap repo."
+        required: true
+      # GitHub cannot make a secret conditionally required, so these are declared
+      # optional and checked at run time when `sign` is on.
+      DEVELOPER_ID_P12_BASE64:
+        description: "base64 of a Developer ID Application certificate exported as .p12. Required when sign is true."
+        required: false
+      DEVELOPER_ID_P12_PASSWORD:
+        description: "Passphrase that .p12 was exported with. Required when sign is true."
+        required: false
+      NOTARY_KEY:
+        description: "base64 of an App Store Connect API key .p8. Required when sign is true."
+        required: false
+      NOTARY_KEY_ID:
+        description: "Key ID of that API key. Required when sign is true."
+        required: false
+      NOTARY_ISSUER_ID:
+        description: "Issuer ID of that API key. Required when sign is true."
+        required: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Resolve version and cask path
+      id: ver
+      env:
+        CASK_NAME: ${{ inputs.cask-name }}
+        VERSION_FILE: ${{ inputs.version-file }}
+        VERSION_REGEX: ${{ inputs.version-regex }}
+      run: |
+        set -euo pipefail
+
+        TAG="$GITHUB_REF_NAME"
+
+        # The tag names the release, but the version compiled into the binary is
+        # what a user sees from `--version`. If they disagree, every bug report
+        # cites the wrong build.
+        if [ -n "$VERSION_FILE" ]; then
+          if [ -z "$VERSION_REGEX" ]; then
+            echo "::error::version-file is set but version-regex is empty. Both are needed to read the version."
+            exit 1
+          fi
+          if [ ! -f "$VERSION_FILE" ]; then
+            echo "::error file=$VERSION_FILE::version-file does not exist."
+            exit 1
+          fi
+          SRC_VERSION="$(sed -nE "s/${VERSION_REGEX}/\1/p" "$VERSION_FILE" | head -1)"
+          if [ -z "$SRC_VERSION" ]; then
+            echo "::error file=$VERSION_FILE::version-regex matched nothing. It needs exactly one capture group around the version."
+            exit 1
+          fi
+          # An RC tag like 1.2.3-rc.1 should match the source's base 1.2.3.
+          BASE="${TAG%%-*}"
+          if [ "$BASE" != "$SRC_VERSION" ]; then
+            echo "::error file=$VERSION_FILE::Source version ($SRC_VERSION) does not match the base of tag ($TAG). Bump the source, or the release ships a binary that reports the wrong version."
+            exit 1
+          fi
+          echo "Tag $TAG agrees with source version $SRC_VERSION"
+        else
+          echo "::notice::No version-file given, so the tag is not checked against the source."
+        fi
+
+        # An RC goes to its own cask, so the stable channel is untouched.
+        case "$TAG" in
+          *-*) CASK_PATH="Casks/${CASK_NAME}-rc.rb" ;;
+          *)   CASK_PATH="Casks/${CASK_NAME}.rb" ;;
+        esac
+
+        echo "version=$TAG" >> "$GITHUB_OUTPUT"
+        echo "cask_path=$CASK_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Build release binaries
+      run: swift build -c release
+
+    - name: Check every named binary was built
+      env:
+        BINARIES: ${{ inputs.binaries }}
+      run: |
+        set -euo pipefail
+        # Unquoted on purpose: `binaries` is a list, and splitting it on
+        # whitespace is how a caller passes more than one.
+        # shellcheck disable=SC2086
+        for bin in $BINARIES; do
+          if [ ! -f ".build/release/$bin" ]; then
+            echo "::error::.build/release/$bin does not exist. Is '$bin' an executable product of this package?"
+            exit 1
+          fi
+        done
+
+    - name: Sign and notarize
+      id: signing
+      if: inputs.sign
+      env:
+        BINARIES: ${{ inputs.binaries }}
+        P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+        P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+        NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+        NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+      run: |
+        set -euo pipefail
+
+        for name in P12_BASE64 P12_PASSWORD NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+          if [ -z "${!name:-}" ]; then
+            echo "::error::sign is true, so the secret behind $name is required."
+            exit 1
+          fi
+        done
+
+        # A throwaway keychain, so nothing is left in the runner's login keychain
+        # and the cleanup step can delete the lot.
+        KEYCHAIN_NAME="swiftpm-cask-release"
+        KEYCHAIN_PASSWORD="$(uuidgen)"
+        security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+        security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+        # The substitution must word-split: `-s` takes the new search list as
+        # separate arguments, so quoting it would pass every existing keychain
+        # as one path and drop them all.
+        # shellcheck disable=SC2046
+        security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
+        echo "keychain=$KEYCHAIN_NAME" >> "$GITHUB_OUTPUT"
+
+        P12="${RUNNER_TEMP}/developer-id.p12"
+        printf '%s' "$P12_BASE64" | base64 --decode > "$P12"
+        security import "$P12" -k "$KEYCHAIN_NAME" -P "$P12_PASSWORD" -T /usr/bin/codesign -f pkcs12
+        rm -f "$P12"
+        # Without this, codesign blocks on a GUI prompt for keychain access that
+        # no one can answer on a runner.
+        security set-key-partition-list \
+          -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME" >/dev/null
+
+        IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" \
+          | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')"
+        if [ -z "$IDENTITY" ]; then
+          echo "::error::No 'Developer ID Application' identity in the imported .p12. Export the certificate together with its private key."
+          security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
+          exit 1
+        fi
+        echo "Signing identity: $IDENTITY"
+
+        # --options runtime is what makes the binary eligible for notarization.
+        # --timestamp is what keeps the signature valid after the cert expires.
+        # shellcheck disable=SC2086
+        for bin in $BINARIES; do
+          codesign --force --options runtime --timestamp \
+            --keychain "$KEYCHAIN_NAME" --sign "$IDENTITY" ".build/release/$bin"
+          codesign --verify --strict --verbose=2 ".build/release/$bin"
+        done
+
+        # notarytool takes an archive, never a loose binary.
+        STAGE="${RUNNER_TEMP}/notarize"
+        mkdir -p "$STAGE"
+        # shellcheck disable=SC2086
+        for bin in $BINARIES; do
+          cp ".build/release/$bin" "$STAGE/"
+        done
+        # No --keepParent: the binaries belong at the root of the zip.
+        ditto -c -k "$STAGE" "${RUNNER_TEMP}/notarize.zip"
+
+        KEY_PATH="${RUNNER_TEMP}/notary.p8"
+        printf '%s' "$NOTARY_KEY" | base64 --decode > "$KEY_PATH"
+        set +e
+        SUBMIT_JSON="$(xcrun notarytool submit "${RUNNER_TEMP}/notarize.zip" \
+          --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+          --wait --timeout 30m --output-format json)"
+        SUBMIT_STATUS=$?
+        set -e
+        echo "$SUBMIT_JSON"
+        ID="$(printf '%s' "$SUBMIT_JSON" | jq -r '.id // empty')"
+        STATUS="$(printf '%s' "$SUBMIT_JSON" | jq -r '.status // empty')"
+        if [ "$STATUS" != "Accepted" ] || [ "$SUBMIT_STATUS" -ne 0 ]; then
+          echo "::error::Notarization did not succeed (status: ${STATUS:-unknown})."
+          [ -n "$ID" ] && xcrun notarytool log "$ID" \
+            --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" || true
+          rm -f "$KEY_PATH"
+          exit 1
+        fi
+        rm -f "$KEY_PATH"
+
+        # No `stapler` step: it only writes a ticket into a bundle, a .dmg or a
+        # .pkg, and these are bare executables. Gatekeeper looks the ticket up
+        # online instead, which is why the notarization above still matters.
+
+    - name: Package tarball
+      id: pkg
+      env:
+        BINARIES: ${{ inputs.binaries }}
+        CASK_NAME: ${{ inputs.cask-name }}
+      run: |
+        set -euo pipefail
+        ARCHIVE="${CASK_NAME}-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz"
+        mkdir -p dist
+        # shellcheck disable=SC2086
+        tar -czf "dist/$ARCHIVE" -C .build/release $BINARIES
+        SHA="$(shasum -a 256 "dist/$ARCHIVE" | awk '{print $1}')"
+        echo "archive=dist/$ARCHIVE" >> "$GITHUB_OUTPUT"
+        echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+    # The asset goes to the tap, not to this repo: `brew` fetches a cask URL with
+    # no credentials, so a private source repo's release asset would 404 for it.
+    - name: Create release on tap repo
+      env:
+        GH_TOKEN: ${{ secrets.TAP_RELEASE_TOKEN }}
+        TAP_REPO: ${{ inputs.tap-repo }}
+        CASK_NAME: ${{ inputs.cask-name }}
+        ARCHIVE: ${{ steps.pkg.outputs.archive }}
+      run: |
+        set -euo pipefail
+        gh release create "${CASK_NAME}-${GITHUB_REF_NAME}" \
+          --repo "$TAP_REPO" \
+          --title "${CASK_NAME} ${GITHUB_REF_NAME}" \
+          --notes "Binary release for ${CASK_NAME} ${GITHUB_REF_NAME} (aarch64-apple-darwin)." \
+          "$ARCHIVE"
+
+    - name: Bump cask in tap repo
+      env:
+        GH_TOKEN: ${{ secrets.TAP_RELEASE_TOKEN }}
+        TAP_REPO: ${{ inputs.tap-repo }}
+        CASK_NAME: ${{ inputs.cask-name }}
+        VERSION: ${{ steps.ver.outputs.version }}
+        SHA256: ${{ steps.pkg.outputs.sha256 }}
+        CASK_PATH: ${{ steps.ver.outputs.cask_path }}
+      run: |
+        set -euo pipefail
+        git clone "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}.git" tap
+        cd tap
+        if [ ! -f "$CASK_PATH" ]; then
+          echo "::error::$CASK_PATH does not exist in $TAP_REPO. This workflow rewrites a cask; it does not create one."
+          exit 1
+        fi
+        sed -i '' -E "s/^  version \".*\"$/  version \"${VERSION}\"/" "$CASK_PATH"
+        sed -i '' -E "s/^  sha256 \".*\"$/  sha256 \"${SHA256}\"/" "$CASK_PATH"
+        if git diff --quiet; then
+          echo "no cask changes to commit"
+          exit 0
+        fi
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add "$CASK_PATH"
+        git commit -m "${CASK_NAME}: bump $(basename "$CASK_PATH" .rb) to ${VERSION}"
+        git push
+
+    - name: Clean up signing keychain
+      if: always() && steps.signing.outputs.keychain != ''
+      env:
+        KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+      run: security delete-keychain "$KEYCHAIN" || true
