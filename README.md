@@ -252,16 +252,12 @@ jobs:
 
 ## Notes
 
-- Callers are a mix of private (`mtg`, …) and public (`claude-squad`) repos.
-  While this repo is private, its Settings → Actions → Access must be "Accessible
-  from repositories owned by the user account." **Unverified:** whether that
-  setting covers a *public* caller calling into this private repo. `claude-squad`
-  is the first public caller, so if its release run fails at startup with a
-  workflow-not-found error, that is why — the fix is to make this repo public,
-  which is safe: nothing here is secret, and a caller supplies its own `vars` and
-  `secrets`. A public repo's reusable workflows are callable by anyone, so that
-  access setting no longer applies — a caller gets its own S3 bucket and IAM role, never
-  these.
+- Callers are a mix of private (`mtg`, …) and public (`claude-squad`) repos. This
+  repo is public, so its workflows are callable by anyone and the Settings →
+  Actions → Access setting no longer applies. That is safe: nothing here is
+  secret, and a caller supplies its own `vars` and `secrets`, so it gets its own
+  S3 bucket and IAM role, never these. (While this repo was private, Access had to
+  be "Accessible from repositories owned by the user account.")
 - Installs are **ad-hoc**: a tester's device UDID must be in the `match adhoc`
   provisioning profile.
 - `ota-refresh.yml` re-checks `author_association` itself on `issue_comment`
