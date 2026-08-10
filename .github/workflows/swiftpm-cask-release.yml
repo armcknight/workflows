@@ -20,9 +20,11 @@ name: SwiftPM cask release (reusable)
 #   - secrets (via `secrets: inherit`): TAP_RELEASE_TOKEN — a fine-grained PAT
 #     with `Contents: read+write` on the tap repo. It creates the release there
 #     and pushes the cask bump.
-#   - with `sign: true`, also: DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD,
-#     NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER_ID. The workflow names the missing
-#     one rather than shipping an unsigned build.
+#   - with `sign: true`, also the `match-git-url` + `team-id` inputs and the
+#     secrets MATCH_PASSWORD, MATCH_DEPLOY_KEY, NOTARY_KEY, NOTARY_KEY_ID,
+#     NOTARY_ISSUER_ID. The Developer ID Application certificate is read from the
+#     fastlane match repo (readonly, same as macos-cask-release.yml). The
+#     workflow names a missing one rather than shipping an unsigned build.
 #   - `Casks/<cask-name>.rb` already committed to the tap. This workflow rewrites
 #     the version and sha256 lines; it never creates the file.
 #
@@ -63,6 +65,16 @@ on:
         required: false
         type: boolean
         default: false
+      match-git-url:
+        description: "SSH URL of the fastlane match repo holding the Developer ID Application certificate. Required when sign is true."
+        required: false
+        type: string
+        default: ""
+      team-id:
+        description: "Apple Developer team ID that owns the signing certificate. Required when sign is true."
+        required: false
+        type: string
+        default: ""
       runs-on:
         description: "Runner label. Must be macOS: this workflow signs, notarizes, and uses BSD sed."
         required: false
@@ -74,11 +86,11 @@ on:
         required: true
       # GitHub cannot make a secret conditionally required, so these are declared
       # optional and checked at run time when `sign` is on.
-      DEVELOPER_ID_P12_BASE64:
-        description: "base64 of a Developer ID Application certificate exported as .p12. Required when sign is true."
+      MATCH_PASSWORD:
+        description: "Passphrase the fastlane match repo is encrypted with. Required when sign is true."
         required: false
-      DEVELOPER_ID_P12_PASSWORD:
-        description: "Passphrase that .p12 was exported with. Required when sign is true."
+      MATCH_DEPLOY_KEY:
+        description: "SSH private key with read access to the match repo. Required when sign is true."
         required: false
       NOTARY_KEY:
         description: "base64 of an App Store Connect API key .p8. Required when sign is true."
@@ -168,20 +180,32 @@ jobs:
       if: inputs.sign
       env:
         BINARIES: ${{ inputs.binaries }}
-        P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
-        P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        MATCH_GIT_URL: ${{ inputs.match-git-url }}
+        TEAM_ID: ${{ inputs.team-id }}
+        MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+        MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
         NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
         NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
         NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        FASTLANE_SKIP_UPDATE_CHECK: "1"
+        LC_ALL: en_US.UTF-8
+        LANG: en_US.UTF-8
       run: |
         set -euo pipefail
 
-        for name in P12_BASE64 P12_PASSWORD NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+        for name in MATCH_GIT_URL TEAM_ID MATCH_PASSWORD MATCH_DEPLOY_KEY NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
           if [ -z "${!name:-}" ]; then
-            echo "::error::sign is true, so the secret behind $name is required."
+            echo "::error::sign is true, so $name is required (the match-git-url/team-id input, or the secret behind it)."
             exit 1
           fi
         done
+
+        # Read access to the (private) fastlane match repo over SSH.
+        mkdir -p ~/.ssh
+        # echo (not printf) so the key keeps the trailing newline OpenSSH needs.
+        echo "$MATCH_DEPLOY_KEY" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
 
         # A throwaway keychain, so nothing is left in the runner's login keychain
         # and the cleanup step can delete the lot.
@@ -197,19 +221,25 @@ jobs:
         security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
         echo "keychain=$KEYCHAIN_NAME" >> "$GITHUB_OUTPUT"
 
-        P12="${RUNNER_TEMP}/developer-id.p12"
-        printf '%s' "$P12_BASE64" | base64 --decode > "$P12"
-        security import "$P12" -k "$KEYCHAIN_NAME" -P "$P12_PASSWORD" -T /usr/bin/codesign -f pkcs12
-        rm -f "$P12"
-        # Without this, codesign blocks on a GUI prompt for keychain access that
-        # no one can answer on a runner.
-        security set-key-partition-list \
-          -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME" >/dev/null
+        # match readonly reads the Developer ID Application cert out of the match
+        # repo and imports it into the keychain, making no Apple API calls — so no
+        # Apple credentials are needed to sign. The cert must already be in the
+        # match repo (created once with `fastlane match developer_id`). Uses the
+        # runner's preinstalled fastlane, so the caller needs no Gemfile.
+        fastlane run match \
+          type:developer_id \
+          platform:macos \
+          readonly:true \
+          skip_provisioning_profiles:true \
+          git_url:"$MATCH_GIT_URL" \
+          team_id:"$TEAM_ID" \
+          keychain_name:"$KEYCHAIN_NAME" \
+          keychain_password:"$KEYCHAIN_PASSWORD"
 
         IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" \
           | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')"
         if [ -z "$IDENTITY" ]; then
-          echo "::error::No 'Developer ID Application' identity in the imported .p12. Export the certificate together with its private key."
+          echo "::error::match left no 'Developer ID Application' identity in the keychain. Has the certificate been created in the match repo (fastlane match developer_id)?"
           security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
           exit 1
         fi
