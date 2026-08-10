@@ -23,6 +23,21 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Changed
+
+- **swiftpm-cask-release**: the optional `sign` path now reads the Developer ID
+  Application certificate from a fastlane match repo (readonly), matching
+  `macos-cask-release`, instead of importing a base64 `.p12`. New inputs
+  `match-git-url` + `team-id`; secrets `DEVELOPER_ID_P12_BASE64` /
+  `DEVELOPER_ID_P12_PASSWORD` are replaced by `MATCH_PASSWORD` /
+  `MATCH_DEPLOY_KEY`. A signing caller needs no Gemfile (the runner's fastlane
+  is used). Callers that leave `sign` off (the default) are unaffected.
+
+  ### Caller migration
+  Only callers that set `sign: true`: add the `match-git-url` and `team-id`
+  inputs, and provide `MATCH_PASSWORD` + `MATCH_DEPLOY_KEY` (drop the
+  `DEVELOPER_ID_P12_*` secrets). `NOTARY_*` unchanged.
+
 ## [1.0.1] 2026-08-10
 
 ### Fixed
