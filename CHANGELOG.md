@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [1.0.0] 2026-08-10
+
 ### Added
 - `ios-ci.yml` — reusable PR pipeline for iOS apps: run the fastlane `test` lane,
   then build an ad-hoc IPA, upload it to a private S3 bucket and comment a 12 h
