@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [2.0.0] 2026-08-10
+
 ### Added
 
 - **swiftpm-cask-release**: a `bundle-id` input, passed to `fastlane match` as
