@@ -299,8 +299,12 @@ jobs:
         CASK_PATH: ${{ steps.ver.outputs.cask_path }}
       run: |
         set -euo pipefail
-        git clone "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}.git" tap
+        git clone "https://github.com/${TAP_REPO}.git" tap
         cd tap
+        # Authenticate the push via a credential helper that reads GH_TOKEN at
+        # push time, so the token is never written into .git/config (where
+        # `git remote -v` would print it, and any workspace dump would leak it).
+        git config credential.helper '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'
         if [ ! -f "$CASK_PATH" ]; then
           echo "::error::$CASK_PATH does not exist in $TAP_REPO. This workflow rewrites a cask; it does not create one."
           exit 1
