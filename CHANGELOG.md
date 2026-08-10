@@ -1,0 +1,50 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+A caller pins a tag, so the version tracks the **caller contract**, not the
+internals. The contract is larger than the `workflow_call` inputs: it also covers
+everything a caller must supply — `permissions`, repo variables, inherited
+secrets, and in-repo setup such as a fastlane lane, a `Brewfile` tap or an SSM
+path.
+
+- **Major** — a caller must edit its repo: an input removed or renamed, an
+  optional input made required, or a new permission, variable, secret or in-repo
+  file.
+- **Minor** — a new optional input, a new workflow, a new capability.
+- **Patch** — a fix that needs no caller change.
+
+One tag covers every workflow here, so each entry names the workflow it belongs
+to. Every major entry carries a `### Caller migration` block holding the exact
+edit a caller applies.
+
+## [Unreleased]
+
+### Added
+- `ios-ci.yml` — reusable PR pipeline for iOS apps: run the fastlane `test` lane,
+  then build an ad-hoc IPA, upload it to a private S3 bucket and comment a 12 h
+  presigned OTA install link on the PR.
+- `ota-refresh.yml` — re-sign the install link for a PR's newest (or a given)
+  build, on a `/refresh-staging` comment or `workflow_dispatch`, with no rebuild.
+  Re-checks `author_association` itself, so a caller that omits the `if:` gate
+  fails closed.
+- `ota-cleanup.yml` — delete a PR's S3 prefix when the PR closes.
+- `macos-cask-release.yml` — reusable release pipeline for macOS apps in the
+  `armcknight/homebrew-tools` tap: archive, Developer ID sign with a hardened
+  runtime, notarize and staple, attach the zip to a release on the tap repo and
+  to the caller repo's own release, then bump `version` and `sha256` in the cask.
+- `swift-package-ci.yml` — `swift build` and `swift test` for SwiftPM packages,
+  with a caller-chosen runner and extra arguments for each command.
+- `claude-plugin-ci.yml` — validate a Claude Code plugin manifest and its
+  marketplace manifest on every PR.
+- `claude-plugin-release.yml` — validate both manifests, refuse a tag that
+  disagrees with the plugin manifest version, and create the GitHub release from
+  the changelog section.
+- Release tooling for this repo: a `VERSION` file, this changelog, a `Makefile`
+  wrapping `vrsn` and `prepare-release`, a `ci.yml` that lints every workflow
+  with actionlint and requires a changelog entry, and a `release.yml` that
+  publishes the GitHub release and moves the major alias tag. The README gains a
+  "Versioning and pinning" section, and its caller examples now pin `@1`.

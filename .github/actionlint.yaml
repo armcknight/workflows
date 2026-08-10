@@ -1,0 +1,9 @@
+# actionlint config. See https://github.com/rhysd/actionlint
+
+# actionlint ships a fixed list of GitHub-hosted runner labels and rejects any
+# label it does not know. Labels newer than the pinned actionlint land here until
+# a release learns them. Declaring a label only adds to the known set, so a typo
+# in any other label is still caught.
+self-hosted-runner:
+  labels:
+    - macos-26

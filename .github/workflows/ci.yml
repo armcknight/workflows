@@ -1,0 +1,67 @@
+name: ci
+
+# This repo's own CI. Unlike every other workflow here it has no `workflow_call`
+# trigger, so a caller cannot `uses:` it.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+
+    # The image carries shellcheck, so this lints the workflow YAML *and* every
+    # `run:` block in it — which is where nearly all the shell in this repo
+    # lives. Keep the version and the excludes in step with the Makefile.
+    - uses: docker://rhysd/actionlint:1.7.7
+      env:
+        SHELLCHECK_OPTS: -e SC2016 -e SC2129 -e SC2015
+      with:
+        args: -color
+
+  changelog:
+    name: Changelog entry
+    # A push to main is the release commit or a merge, which already carries its
+    # entry. The label is the escape hatch for a comment-only edit.
+    if: >
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-changelog')
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        # Both ends of the comparison must be present to diff them.
+        fetch-depth: 0
+
+    - name: Require a changelog entry for a workflow change
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+
+        changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+
+        if ! printf '%s\n' "$changed" | grep -q '^\.github/'; then
+          echo "No change under .github/; nothing to require."
+          exit 0
+        fi
+
+        if printf '%s\n' "$changed" | grep -qx 'CHANGELOG.md'; then
+          echo "The changelog moved with the workflow change."
+          exit 0
+        fi
+
+        # Callers pin a tag and read the release notes to decide whether to move
+        # it. A workflow change with no entry is invisible to them, and
+        # prepare-release refuses to cut a release from an empty [Unreleased].
+        echo "::error file=CHANGELOG.md::This PR changes .github/ but not CHANGELOG.md. Add an entry under [Unreleased], or add the 'skip-changelog' label."
+        exit 1

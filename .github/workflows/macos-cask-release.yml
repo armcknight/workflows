@@ -256,6 +256,10 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          # The substitution must word-split: `-s` takes the new search list as
+          # separate arguments, so quoting it would pass every existing keychain
+          # as one path and drop them all.
+          # shellcheck disable=SC2046
           security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
           # readonly: read the cert out of the match repo and make no Apple API
           # calls, so no Apple credentials are needed here. skip_provisioning_

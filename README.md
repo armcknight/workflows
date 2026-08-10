@@ -1,13 +1,18 @@
 # armcknight/workflows
 
-Reusable GitHub Actions workflows shared across armcknight Apple-platform apps.
-Two pipelines live here:
+Reusable GitHub Actions workflows shared across armcknight repos. Four areas:
 
 - **staging OTA** (iOS) — on every PR, run tests, then build an ad-hoc IPA and
   publish a presigned [`itms-services`](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices)
   over-the-air install link to a private S3 bucket, commented on the PR.
 - **macOS cask release** — on a version tag, build, sign, and notarize a macOS
   app, then publish it through the `armcknight/homebrew-tools` Homebrew tap.
+- **SwiftPM package CI** — `swift build` and `swift test` on every PR.
+- **Claude Code plugin** — validate the plugin and marketplace manifests on every
+  PR, and cut the release on a version tag.
+
+Callers pin the moving major tag: `@1`. See
+[Versioning and pinning](#versioning-and-pinning).
 
 ## Why S3 + presigned links
 
@@ -29,6 +34,12 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
+| `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package. |
+| `claude-plugin-ci.yml` | `pull_request` | Validate a Claude Code plugin manifest and its marketplace manifest. |
+| `claude-plugin-release.yml` | `push` of a version tag | Validate both manifests, refuse a tag that disagrees with the plugin version, create the GitHub release. |
+
+`ci.yml` and `release.yml` are this repo's **own** CI, not part of that list. They
+have no `workflow_call` trigger, so a caller cannot `uses:` them.
 
 S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run-<id>/`.
 
@@ -66,6 +77,63 @@ PR's newest build), `comment-id` (optional — the comment to react to).
 | `runs-on` | no (`macos-26`) | Runner label. |
 
 Outputs: `version`, `asset`, `sha256`.
+
+`swift-package-ci.yml`: `runs-on` (optional, `macos-15`), `build-args` and
+`test-args` (optional — appended to `swift build` and `swift test`).
+
+`claude-plugin-ci.yml` and `claude-plugin-release.yml`: `plugin-path` (required),
+`marketplace-path` (optional, `.`), `runs-on` (optional). `claude-plugin-release.yml`
+also takes `changelog` (optional, `CHANGELOG.md`) and `prerelease` (optional).
+
+## Versioning and pinning
+
+Every workflow here is versioned together under one tag, with semver applied to
+the **caller contract**. That contract is larger than the `workflow_call` inputs:
+it also covers what a caller must supply — `permissions`, repo variables,
+inherited secrets, and in-repo setup such as a fastlane lane or a `Brewfile` tap.
+A change that makes a caller edit its repo is a major change. `CHANGELOG.md`
+states the rules, and names the workflow in every entry, because one tag covers
+all of them.
+
+There are two kinds of tag:
+
+| Tag | Moves? | Pin to it when |
+|-----|--------|----------------|
+| `1` | Yes — always the newest `1.x.y`. | Normal use. Fixes and new optional inputs reach you with no PR, and a breaking change cannot reach you by accident. |
+| `1.2.3` | Never. | You need the build reproducible, or you are trying one app against a release candidate. |
+
+```yaml
+uses: armcknight/workflows/.github/workflows/ios-ci.yml@1
+```
+
+Tags are bare, with no `v` prefix, the same as `armcknight/tools`. A release
+candidate carries an `-RC<n>` suffix and never moves the `1` alias, so a caller
+pinned to `1` never picks one up.
+
+A major bump is a signal, not a failure. Read that release's `### Caller
+migration` block, apply the edit it names, and move the pin to `2`.
+
+### Cutting a release
+
+The `make` targets wrap `vrsn` and `prepare-release` from `armcknight/tools`:
+
+```
+make minor      # or patch / major — bumps VERSION and commits
+make deploy     # migrates [Unreleased] into the new section, tags, pushes
+```
+
+`prepare-release` refuses to run when `VERSION` was not bumped, or when
+`[Unreleased]` is empty, so a forgotten step fails before anything is tagged. Use
+`make deploy-beta` for an `-RC<n>` instead, to try a change against one app before
+every app gets it.
+
+Pushing the tag starts `release.yml` here. It publishes the GitHub release from
+the changelog section and moves the major alias. It refuses a tag that is not on
+`main`, and it leaves the alias alone when you cut a patch on an older line, so
+the alias never moves backwards.
+
+`make lint` runs the same actionlint check `ci.yml` runs, so a lint failure shows
+up before the PR.
 
 ## Caller requirements — OTA workflows
 
@@ -168,7 +236,7 @@ permissions:
   id-token: write
 jobs:
   ci:
-    uses: armcknight/workflows/.github/workflows/ios-ci.yml@main
+    uses: armcknight/workflows/.github/workflows/ios-ci.yml@1
     with:
       ipa-name: MyApp-staging
       # Key names only — never values. Each name resolves to a same-named repo
@@ -201,7 +269,7 @@ jobs:
       (github.event.issue.pull_request &&
        startsWith(github.event.comment.body, '/refresh-staging') &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
-    uses: armcknight/workflows/.github/workflows/ota-refresh.yml@main
+    uses: armcknight/workflows/.github/workflows/ota-refresh.yml@1
     with:
       pr-number: ${{ github.event.issue.number || inputs.pr_number }}
       run-id: ${{ inputs.run_id }}
@@ -220,7 +288,7 @@ permissions:
   id-token: write
 jobs:
   cleanup:
-    uses: armcknight/workflows/.github/workflows/ota-cleanup.yml@main
+    uses: armcknight/workflows/.github/workflows/ota-cleanup.yml@1
     secrets: inherit
 ```
 
@@ -237,7 +305,7 @@ permissions:
   contents: write
 jobs:
   release:
-    uses: armcknight/workflows/.github/workflows/macos-cask-release.yml@main
+    uses: armcknight/workflows/.github/workflows/macos-cask-release.yml@1
     with:
       scheme: MyApp
       app-name: MyApp
@@ -267,4 +335,6 @@ jobs:
 - `issue_comment` and `workflow_run` triggers always run the **default-branch**
   copy of the *caller's* workflow, so `/refresh-staging` only works once the
   caller's workflow is on its default branch.
-- Pin callers to `@main` or cut a tag (e.g. `@v1`) here and reference that.
+- Pin callers to the moving major tag, `@1`, not to `@main`. `@main` gets a
+  breaking change the moment it merges, with no release note to warn you. See
+  [Versioning and pinning](#versioning-and-pinning).
