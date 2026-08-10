@@ -1,0 +1,3 @@
+# Finder metadata. A pattern with no slash matches at any depth, so this covers
+# .github/.DS_Store too.
+.DS_Store
