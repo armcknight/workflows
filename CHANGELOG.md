@@ -23,6 +23,13 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Fixed
+
+- **swiftpm-cask-release**: authenticate the tap push with a git credential
+  helper that reads `TAP_RELEASE_TOKEN` at push time, instead of embedding the
+  token in the clone URL — so the token no longer lands in the checkout's
+  `.git/config`. No caller change.
+
 ## [1.0.0] 2026-08-10
 
 ### Added
