@@ -23,6 +23,14 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Fixed
+
+- **swiftpm-cask-release**: the `sign` path's `fastlane match` call now passes
+  `app_identifier`, which match requires even for a `developer_id` fetch with
+  `skip_provisioning_profiles` — without it signing aborted with "No value found
+  for 'app_identifier'". Synthesized from the cask name (`io.mcknight.<cask>`)
+  and unused for the team-wide Developer ID cert, so no caller change.
+
 ## [1.2.0] 2026-08-10
 
 ### Added

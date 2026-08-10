@@ -187,6 +187,7 @@ jobs:
       if: inputs.sign
       env:
         BINARIES: ${{ inputs.binaries }}
+        CASK_NAME: ${{ inputs.cask-name }}
         MATCH_GIT_URL: ${{ inputs.match-git-url }}
         TEAM_ID: ${{ inputs.team-id }}
         MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
@@ -233,11 +234,16 @@ jobs:
         # Apple credentials are needed to sign. The cert must already be in the
         # match repo (created once with `fastlane match developer_id`). Uses the
         # runner's preinstalled fastlane, so the caller needs no Gemfile.
+        # match requires app_identifier even for a developer_id fetch with
+        # skip_provisioning_profiles — it validates the option before it ever
+        # looks at profiles. The Developer ID Application cert is team-wide, so
+        # the value is unused here; synthesize a stable one from the cask name.
         fastlane run match \
           type:developer_id \
           platform:macos \
           readonly:true \
           skip_provisioning_profiles:true \
+          app_identifier:"io.mcknight.${CASK_NAME}" \
           git_url:"$MATCH_GIT_URL" \
           team_id:"$TEAM_ID" \
           keychain_name:"$KEYCHAIN_NAME" \
