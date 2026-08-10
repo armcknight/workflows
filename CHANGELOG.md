@@ -23,13 +23,17 @@ edit a caller applies.
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- **swiftpm-cask-release**: the `sign` path's `fastlane match` call now passes
-  `app_identifier`, which match requires even for a `developer_id` fetch with
+- **swiftpm-cask-release**: a `bundle-id` input, passed to `fastlane match` as
+  `app_identifier`. match requires it even for a `developer_id` fetch with
   `skip_provisioning_profiles` — without it signing aborted with "No value found
-  for 'app_identifier'". Synthesized from the cask name (`io.mcknight.<cask>`)
-  and unused for the team-wide Developer ID cert, so no caller change.
+  for 'app_identifier'". It is unused for the team-wide Developer ID certificate,
+  but the caller supplies its own value so the workflow carries no identity.
+
+  ### Caller migration
+  Only callers that set `sign: true`: add a `bundle-id` input (e.g.
+  `bundle-id: com.example.<tool>`).
 
 ## [1.2.0] 2026-08-10
 
