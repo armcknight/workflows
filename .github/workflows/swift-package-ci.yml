@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: ""
+      submodules:
+        description: "Passed to actions/checkout. Use `recursive` when the package's dependencies are vendored as git submodules (e.g. path-based SwiftPM deps). Empty (the default) checks out no submodules."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build-and-test:
@@ -34,6 +39,8 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: ${{ inputs.submodules }}
 
       - name: Build
         run: swift build ${{ inputs.build-args }}

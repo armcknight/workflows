@@ -80,6 +80,11 @@ on:
         required: false
         type: string
         default: "macos-15"
+      submodules:
+        description: "Passed to actions/checkout. Use `recursive` when the package's dependencies are vendored as git submodules (e.g. path-based SwiftPM deps). Empty (the default) checks out no submodules."
+        required: false
+        type: string
+        default: ""
     secrets:
       TAP_RELEASE_TOKEN:
         description: "Fine-grained PAT with Contents: read+write on the tap repo."
@@ -108,6 +113,8 @@ jobs:
     runs-on: ${{ inputs.runs-on }}
     steps:
     - uses: actions/checkout@v5
+      with:
+        submodules: ${{ inputs.submodules }}
 
     - name: Resolve version and cask path
       id: ver
