@@ -23,6 +23,20 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **github-release**: a new reusable workflow that publishes a GitHub release
+  from the tagged changelog section, optionally attaching files. For repos with
+  nothing to build, sign or upload, where tagging *is* the release — a SwiftPM
+  library resolved from the tag, or a Spoon repo installed off the branch.
+  `armcknight/swift-armcknight` and `armcknight/hammerspoons` had each grown a
+  near-identical copy of this; both now call it.
+
+  Every input is optional: `changelog`, `assets`, `prerelease`, `runs-on`. A tag
+  with a prerelease suffix is marked a prerelease regardless of the input. The
+  workflow runs no caller-supplied commands — a caller gating the release on a
+  check puts it in its own job and depends on it with `needs:`.
+
 ## [2.0.0] 2026-08-10
 
 ### Added

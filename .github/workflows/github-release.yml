@@ -1,0 +1,124 @@
+name: GitHub release (reusable)
+
+# Reusable release pipeline for repos with nothing to build, sign or upload —
+# where tagging *is* the release. A SwiftPM library (armcknight/swift-armcknight)
+# is resolved by dependents straight from the git tag; a Hammerspoon Spoon
+# repo (armcknight/hammerspoons) is installed off the branch. In both cases the
+# release is the published record of a tag, with notes taken from the changelog.
+#
+# On a version tag in the caller repo, this workflow creates a GitHub release
+# from that version's changelog section, and optionally attaches files to it.
+#
+# `make deploy` in the caller migrates the changelog, tags and pushes from a
+# workstation. Publishing the release happens here so it never depends on which
+# machine tagged.
+#
+# A tag carrying a prerelease suffix (anything after a `-`, which is how
+# prepare-release names an RC) is published as a prerelease, so the newest final
+# release stays the one GitHub shows as "Latest". Set `prerelease: true` to force
+# it for a tag that carries no suffix.
+#
+# Caller requirements:
+#   - trigger on a version tag push (`X.Y.Z`, optionally with an RC suffix)
+#   - `permissions: contents: write` (to create the release)
+#   - a CHANGELOG.md with a section for the version being released
+#
+#   jobs:
+#     release:
+#       permissions:
+#         contents: write
+#       uses: armcknight/workflows/.github/workflows/github-release.yml@2
+#
+# To gate the release on a check, put it in its own job and depend on it — this
+# workflow runs no caller-supplied commands:
+#
+#   jobs:
+#     verify:
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: actions/checkout@v5
+#         - run: make verify
+#     release:
+#       needs: verify
+#       permissions:
+#         contents: write
+#       uses: armcknight/workflows/.github/workflows/github-release.yml@2
+#       with:
+#         assets: Spoons/*.spoon.zip
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "Runner label."
+        required: false
+        type: string
+        default: "macos-15"
+      changelog:
+        description: "Path to the changelog used for release notes."
+        required: false
+        type: string
+        default: "CHANGELOG.md"
+      assets:
+        description: "Files to attach to the release, as a whitespace-separated list of paths or globs. Empty (the default) attaches nothing."
+        required: false
+        type: string
+        default: ""
+      prerelease:
+        description: "Force the release to be marked a prerelease. A tag with a prerelease suffix is marked one regardless."
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  github-release:
+    name: Publish GitHub release
+    # prepare-github-release ships in the tools cask, and a cask is macOS only.
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # prepare-github-release reads the changelog section for the tag, and
+          # needs the tag's history to resolve it.
+          fetch-depth: 0
+
+      - name: Install armcknight/tools
+        run: |
+          set -euo pipefail
+          # Homebrew refuses to load formulae and casks from an untrusted tap.
+          brew trust armcknight/tools
+          brew install --cask armcknight/tools/tools
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_PRERELEASE: ${{ inputs.prerelease }}
+          CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          set -euo pipefail
+
+          # Two full calls rather than an array of arguments: macOS still
+          # resolves `bash` to 3.2, where expanding an empty array under `set -u`
+          # aborts the script — which would break every final release.
+          case "$GITHUB_REF_NAME:$FORCE_PRERELEASE" in
+            *-*|*:true)
+              prepare-github-release "$GITHUB_REF_NAME" --changelog "$CHANGELOG" --prerelease
+              ;;
+            *)
+              prepare-github-release "$GITHUB_REF_NAME" --changelog "$CHANGELOG"
+              ;;
+          esac
+
+      # Skipped entirely when `assets` is empty, so a caller with nothing to
+      # attach needs no extra configuration.
+      - name: Attach the assets
+        if: ${{ inputs.assets != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSETS: ${{ inputs.assets }}
+        run: |
+          set -euo pipefail
+          # Deliberately unquoted: ASSETS is a whitespace-separated list of paths
+          # and globs that must word-split and expand here.
+          # shellcheck disable=SC2086
+          gh release upload "$GITHUB_REF_NAME" $ASSETS --clobber

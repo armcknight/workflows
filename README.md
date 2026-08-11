@@ -38,6 +38,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | `swiftpm-cask-release.yml` | `push` of a version tag | Build a SwiftPM CLI, optionally sign + notarize it, attach the tarball to a release on the tap repo, bump the cask. |
 | `claude-plugin-ci.yml` | `pull_request` | Validate a Claude Code plugin manifest and its marketplace manifest. |
 | `claude-plugin-release.yml` | `push` of a version tag | Validate both manifests, refuse a tag that disagrees with the plugin version, create the GitHub release. |
+| `github-release.yml` | `push` of a version tag | Create the GitHub release from the changelog section, optionally attaching files. For repos where tagging *is* the release. |
 
 `ci.yml` and `release.yml` are this repo's **own** CI, not part of that list. They
 have no `workflow_call` trigger, so a caller cannot `uses:` them.
@@ -124,6 +125,21 @@ jobs:
 `claude-plugin-ci.yml` and `claude-plugin-release.yml`: `plugin-path` (required),
 `marketplace-path` (optional, `.`), `runs-on` (optional). `claude-plugin-release.yml`
 also takes `changelog` (optional, `CHANGELOG.md`) and `prerelease` (optional).
+
+`github-release.yml`: every input is optional — `changelog` (`CHANGELOG.md`),
+`assets` (whitespace-separated paths or globs to attach; nothing by default),
+`prerelease`, and `runs-on`. A tag with a prerelease suffix is marked a
+prerelease whether or not the input is set.
+
+```yaml
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: armcknight/workflows/.github/workflows/github-release.yml@2
+    with:
+      assets: Spoons/*.spoon.zip
+```
 
 ## Versioning and pinning
 
