@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [2.1.0] 2026-08-10
+
 ### Added
 
 - **github-release**: a new reusable workflow that publishes a GitHub release
