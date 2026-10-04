@@ -109,4 +109,39 @@ jobs:
         printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
           "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
 
+        # Collect earlier install-link comments (the original "Staging build
+        # ready" from ios-ci and any prior refreshes) before posting, so the
+        # new one is never among them.
+        STALE_IDS=$(gh api graphql --paginate \
+          -f owner="${GITHUB_REPOSITORY%%/*}" \
+          -f repo="${GITHUB_REPOSITORY##*/}" \
+          -F pr="$PR_NUMBER" \
+          -f query='
+            query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                  comments(first: 100, after: $endCursor) {
+                    nodes { id isMinimized author { login } body }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
+              }
+            }' \
+          --jq '.data.repository.pullRequest.comments.nodes[]
+            | select(.isMinimized | not)
+            | select(.author.login == "github-actions")
+            | select(.body | startswith("Staging build ready") or startswith("Refreshed staging install link"))
+            | .id') || STALE_IDS=""
+
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
+
+        # Hide the superseded links as outdated. Best-effort: a failure here
+        # must not fail the refresh.
+        for ID in $STALE_IDS; do
+          gh api graphql -f id="$ID" -f query='
+            mutation($id: ID!) {
+              minimizeComment(input: { subjectId: $id, classifier: OUTDATED }) {
+                minimizedComment { isMinimized }
+              }
+            }' --silent || echo "::warning::Could not hide stale comment $ID"
+        done

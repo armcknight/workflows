@@ -23,6 +23,14 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **ota-refresh**: after it posts the refreshed install link, hide the PR's
+  earlier install-link comments (the original "Staging build ready" from
+  `ios-ci` and any prior refreshes) as outdated, so only the current link stays
+  visible. Best-effort: a comment that cannot be hidden logs a warning and does
+  not fail the refresh. No caller change.
+
 ## [2.1.0] 2026-08-10
 
 ### Added
