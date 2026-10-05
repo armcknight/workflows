@@ -28,7 +28,9 @@ edit a caller applies.
 - **ota-refresh**: after it posts the refreshed install link, hide the PR's
   earlier install-link comments (the original "Staging build ready" from
   `ios-ci` and any prior refreshes) as outdated, so only the current link stays
-  visible. Best-effort: a comment that cannot be hidden logs a warning and does
+  visible. It also hides the `/refresh-staging` command comments and the
+  notices of earlier refreshes (a missing build, or an expired one being
+  rebuilt). Best-effort: a comment that cannot be hidden logs a warning and does
   not fail the refresh. No caller change.
 - **ota-refresh**: when the PR has no build to re-sign (the bucket's lifecycle
   rule deleted it, or an explicit `run-id` does not exist), comment the reason

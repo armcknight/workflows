@@ -31,7 +31,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | File | Trigger (in caller) | What it does |
 |------|--------------------|--------------|
 | `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link. |
-| `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
+| `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
 | `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package. |

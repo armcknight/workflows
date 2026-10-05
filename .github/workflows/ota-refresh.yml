@@ -113,10 +113,12 @@ jobs:
         PREFIX="s3://$S3_BUCKET/$PROJECT/pr-$PR_NUMBER/"
         RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
-        # The PR's install-link comments from earlier runs (the original
-        # "Staging build ready" from ios-ci and any prior refreshes), oldest
-        # first. Read before posting anything, so a comment this run posts is
-        # never among them.
+        # The PR's comments that a refresh makes stale, oldest first: install
+        # links from earlier runs (the original "Staging build ready" from ios-ci
+        # and any prior refreshes), earlier refreshes' notices (a missing build,
+        # or an expired one being rebuilt), and the `/refresh-staging` commands,
+        # this run's own included. Read before posting anything, so a comment this
+        # run posts is never among them.
         gh api graphql --paginate \
           -f owner="${GITHUB_REPOSITORY%%/*}" \
           -f repo="$PROJECT" \
@@ -133,15 +135,19 @@ jobs:
               }
             }' \
           --jq '.data.repository.pullRequest.comments.nodes[]
-            | select(.author.login == "github-actions")
-            | select(.body | startswith("Staging build ready") or startswith("Refreshed staging install link"))
-            | {id, isMinimized, createdAt, staged: (.body | startswith("Staging build ready"))}' \
-          > /tmp/link-comments.jsonl || : > /tmp/link-comments.jsonl
+            | (if .author.login == "github-actions" and (.body | startswith("Staging build ready")) then "staged"
+               elif .author.login == "github-actions" and (.body | startswith("Refreshed staging install link")) then "refreshed"
+               elif .author.login == "github-actions" and (.body | startswith("The staging build for") or startswith("No staging build was found")) then "notice"
+               elif .body | startswith("/refresh-staging") then "command"
+               else empty end) as $kind
+            | {id, isMinimized, createdAt, kind: $kind}' \
+          > /tmp/stale-comments.jsonl || : > /tmp/stale-comments.jsonl
 
-        # Hide the superseded links as outdated. Best-effort: a failure here
-        # must not fail the refresh.
+        # Hide the stale comments as outdated: all of them, or only those of the
+        # kinds given as arguments. Best-effort: a failure here must not fail
+        # the refresh.
         hide_stale_comments() {
-          for ID in $(jq -r 'select(.isMinimized | not) | .id' /tmp/link-comments.jsonl); do
+          for ID in $(jq -r --arg kinds "$*" 'select(.isMinimized | not) | .kind as $k | select($kinds == "" or ($kinds | split(" ") | index($k)) != null) | .id' /tmp/stale-comments.jsonl); do
             gh api graphql -f id="$ID" -f query='
               mutation($id: ID!) {
                 minimizeComment(input: { subjectId: $id, classifier: OUTDATED }) {
@@ -157,6 +163,10 @@ jobs:
           printf '%s\n\nStaging builds are probably deleted %s days after they are made, by the lifecycle rule on the staging bucket. A refresh only re-signs a build that exists, so it cannot make a new one.\n\nTo get a new staging build, push a new commit to this branch. Do not close and reopen the PR: closing it deletes all of its staging builds.\n' \
             "$1" "$RETENTION_DAYS" > /tmp/pr-comment.md
           gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md || true
+          # The commands are answered, and this notice replaces earlier ones.
+          # Keep the old links visible: with an explicit run-id, another build
+          # of the PR can still be there.
+          hide_stale_comments command notice
           exit 1
         }
 
@@ -175,7 +185,7 @@ jobs:
         if [ -z "$RUN_ID" ]; then
           # The newest "Staging build ready" comment dates the newest build. A
           # refresh does not touch the S3 objects, so it does not reset their age.
-          LAST_STAGED=$(jq -rs 'map(select(.staged)) | last | .createdAt // empty' /tmp/link-comments.jsonl)
+          LAST_STAGED=$(jq -rs 'map(select(.kind == "staged")) | last | .createdAt // empty' /tmp/stale-comments.jsonl)
           AGE_DAYS=-1
           if [ -n "$LAST_STAGED" ]; then
             AGE_DAYS=$(jq -rn --arg t "$LAST_STAGED" '(now - ($t | fromdateiso8601)) / 86400 | floor')
