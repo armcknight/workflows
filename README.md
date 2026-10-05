@@ -31,7 +31,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | File | Trigger (in caller) | What it does |
 |------|--------------------|--------------|
 | `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link. |
-| `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments are hidden as outdated. |
+| `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
 | `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package. |
@@ -54,9 +54,19 @@ S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run
 | `ipa-name` | yes | Base name of the IPA produced by `fastlane stage`, without `.ipa`. |
 | `arkana-keys` | yes | Space-separated arkana key **names**. Values are resolved from the caller's secrets by name, so no secret values pass through `with:`. |
 | `run-tests` | no (`true`) | Run the fastlane `test` lane first. Set `false` for apps with no unit-test scheme. |
+| `pr-number` | no (none) | PR to build when the trigger is not `pull_request`, such as the rebuild job in the refresh caller below. Leave it out under `pull_request`. |
 
 `ota-refresh.yml`: `pr-number` (required), `run-id` (optional — defaults to the
-PR's newest build), `comment-id` (optional — the comment to react to).
+PR's newest build), `comment-id` (optional — the comment to react to),
+`rebuild-expired` (optional, `false`) and `retention-days` (optional, `30` — the
+age at which the staging bucket's lifecycle rule deletes a build).
+
+When the PR has no build to re-sign, the workflow comments the reason on the PR
+and fails. The one exception: the newest "Staging build ready" comment is older
+than `retention-days`, `rebuild-expired` is `true`, and the PR is open and not
+from a fork. Then it comments that it is rebuilding and sets the output
+`rebuild` to `'true'`, and the caller's `rebuild` job runs `ios-ci.yml` for the
+PR, which posts a new install link.
 
 `ota-cleanup.yml`: no inputs.
 
@@ -313,6 +323,8 @@ on:
       pr_number: { required: true, type: string }
       run_id: { required: false, type: string }
 permissions:
+  contents: read
+  checks: write
   pull-requests: write
   id-token: write
 jobs:
@@ -330,6 +342,21 @@ jobs:
       pr-number: ${{ github.event.issue.number || inputs.pr_number }}
       run-id: ${{ inputs.run_id }}
       comment-id: ${{ github.event.comment.id }}
+      rebuild-expired: true
+    secrets: inherit
+
+  # Runs only when the refresh found the build deleted by the bucket's lifecycle
+  # rule. Use the same ios-ci inputs as ci.yml.
+  rebuild:
+    needs: refresh
+    if: needs.refresh.outputs.rebuild == 'true'
+    uses: armcknight/workflows/.github/workflows/ios-ci.yml@1
+    with:
+      ipa-name: MyApp-staging
+      arkana-keys: SentryDSN FeedbackEmail
+      # The PR's code already ran its tests when it was first built.
+      run-tests: false
+      pr-number: ${{ github.event.issue.number || inputs.pr_number }}
     secrets: inherit
 ```
 

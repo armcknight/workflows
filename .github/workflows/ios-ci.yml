@@ -10,6 +10,10 @@ name: iOS CI (reusable)
 #   - Brewfile taps armcknight/tools (provides ota-publish, xcodegen, etc.)
 #   - caller grants permissions: contents: read, checks: write,
 #     pull-requests: write, id-token: write
+#
+# Normally triggered by `pull_request`. To build a PR from another event (as the
+# refresh workflow's rebuild of an expired staging build does), pass `pr-number`
+# and the jobs check out that PR's head instead of the triggering ref.
 
 on:
   workflow_call:
@@ -27,6 +31,11 @@ on:
         required: false
         type: boolean
         default: true
+      pr-number:
+        description: "PR to build when the trigger is not `pull_request` (for example, a rebuild from the refresh workflow). Leave empty under `pull_request`."
+        required: false
+        type: string
+        default: ""
 
 env:
   # gym's `xcodebuild -showBuildSettings` can exceed the 3s default on projects
@@ -49,6 +58,9 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        # Empty under `pull_request` (the default merge ref); otherwise the
+        # requested PR's head.
+        ref: ${{ github.event_name != 'pull_request' && inputs.pr-number != '' && format('refs/pull/{0}/head', inputs.pr-number) || '' }}
 
     - name: Setup Ruby
       uses: ruby/setup-ruby@v1
@@ -121,6 +133,18 @@ jobs:
       LINK_TTL_SECONDS: "43200"
 
     steps:
+    # Outside `pull_request` there is no head_ref, so look up the requested PR's
+    # head branch.
+    - name: Resolve PR head branch
+      id: pr
+      if: github.event_name != 'pull_request' && inputs.pr-number != ''
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        echo "head-ref=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)" >> "$GITHUB_OUTPUT"
+
     - name: Checkout code
       uses: actions/checkout@v4
       with:
@@ -129,7 +153,7 @@ jobs:
         # merge commit, so inject-git-info records the real branch and commit in
         # the staged IPA (otherwise GIT_BRANCH=HEAD and GIT_COMMIT_HASH is the
         # ephemeral merge SHA).
-        ref: ${{ github.head_ref }}
+        ref: ${{ github.head_ref || steps.pr.outputs.head-ref }}
 
     - name: Setup Ruby
       uses: ruby/setup-ruby@v1
@@ -190,11 +214,13 @@ jobs:
         S3_BUCKET: ${{ vars.S3_BUCKET }}
         AWS_REGION: ${{ vars.AWS_REGION }}
         PROJECT: ${{ github.event.repository.name }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr-number }}
         RUN_ID: ${{ github.run_id }}
         SHA: ${{ github.event.pull_request.head.sha }}
         IPA_NAME: ${{ inputs.ipa-name }}
       run: |
+        # Outside `pull_request` there is no event SHA; use the checked-out head.
+        SHA="${SHA:-$(git rev-parse HEAD)}"
         RESULT=$(ota-publish \
           --mode initial \
           --ipa "${IPA_NAME}.ipa" \

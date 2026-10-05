@@ -30,6 +30,18 @@ edit a caller applies.
   `ios-ci` and any prior refreshes) as outdated, so only the current link stays
   visible. Best-effort: a comment that cannot be hidden logs a warning and does
   not fail the refresh. No caller change.
+- **ota-refresh**: when the PR has no build to re-sign (the bucket's lifecycle
+  rule deleted it, or an explicit `run-id` does not exist), comment the reason
+  and the way to get a new build on the PR, and write an `::error::`
+  annotation, instead of failing with only a log line. An explicit `run-id` is
+  now checked before `ota-publish` runs. No caller change.
+- **ota-refresh**: new optional inputs `rebuild-expired` (default `false`) and
+  `retention-days` (default `30`), and a `rebuild` output. With
+  `rebuild-expired`, a build older than `retention-days` that the bucket has
+  deleted sets `rebuild` instead of failing, so a caller job can run
+  `ios-ci.yml` for the PR. See the README's refresh caller example.
+- **ios-ci**: new optional input `pr-number`, to build a PR's head from an event
+  other than `pull_request`. Unused under `pull_request`.
 
 ## [2.1.0] 2026-08-10
 

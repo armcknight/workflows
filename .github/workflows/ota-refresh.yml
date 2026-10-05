@@ -4,6 +4,12 @@ name: OTA refresh (reusable)
 # the trigger (issue_comment '/refresh-staging' and/or workflow_dispatch) and
 # passes the PR number.
 #
+# The staging bucket deletes builds after `retention-days`. When the PR's build
+# is gone for that reason and the caller sets `rebuild-expired`, this workflow
+# sets the `rebuild` output instead of failing, and the caller runs ios-ci.yml
+# for the PR in a job that needs this one (see README). In every other
+# missing-build case it comments the reason on the PR and fails.
+#
 # Caller requirements: repo vars AWS_ROLE_ARN/AWS_REGION/S3_BUCKET;
 # permissions: pull-requests: write, id-token: write.
 #
@@ -27,6 +33,20 @@ on:
         description: "Comment id to react to (optional; from the /refresh-staging comment)"
         required: false
         type: string
+      rebuild-expired:
+        description: "When the PR's build was deleted by the bucket's lifecycle rule, set the `rebuild` output instead of failing. Only set this when the caller has a job that runs ios-ci.yml on that output."
+        required: false
+        type: boolean
+        default: false
+      retention-days:
+        description: "Days after which the bucket's lifecycle rule deletes a staging build"
+        required: false
+        type: number
+        default: 30
+    outputs:
+      rebuild:
+        description: "'true' when the build expired and the caller should run ios-ci.yml for the PR"
+        value: ${{ jobs.refresh.outputs.rebuild }}
 
 jobs:
   refresh:
@@ -35,6 +55,8 @@ jobs:
     permissions:
       pull-requests: write
       id-token: write
+    outputs:
+      rebuild: ${{ steps.refresh.outputs.rebuild }}
     env:
       LINK_TTL_SECONDS: "43200"
 
@@ -73,6 +95,7 @@ jobs:
       run: brew install armcknight/tools/tools
 
     - name: Re-sign OTA link and comment on PR
+      id: refresh
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # This job has no checkout, so point gh at the repo explicitly;
@@ -83,16 +106,102 @@ jobs:
         AWS_REGION: ${{ vars.AWS_REGION }}
         PR_NUMBER: ${{ inputs.pr-number }}
         RUN_ID_INPUT: ${{ inputs.run-id }}
+        REBUILD_EXPIRED: ${{ inputs.rebuild-expired }}
+        RETENTION_DAYS: ${{ inputs.retention-days }}
       run: |
         PROJECT="${GITHUB_REPOSITORY##*/}"
+        PREFIX="s3://$S3_BUCKET/$PROJECT/pr-$PR_NUMBER/"
+        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+        # The PR's install-link comments from earlier runs (the original
+        # "Staging build ready" from ios-ci and any prior refreshes), oldest
+        # first. Read before posting anything, so a comment this run posts is
+        # never among them.
+        gh api graphql --paginate \
+          -f owner="${GITHUB_REPOSITORY%%/*}" \
+          -f repo="$PROJECT" \
+          -F pr="$PR_NUMBER" \
+          -f query='
+            query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                  comments(first: 100, after: $endCursor) {
+                    nodes { id isMinimized createdAt author { login } body }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
+              }
+            }' \
+          --jq '.data.repository.pullRequest.comments.nodes[]
+            | select(.author.login == "github-actions")
+            | select(.body | startswith("Staging build ready") or startswith("Refreshed staging install link"))
+            | {id, isMinimized, createdAt, staged: (.body | startswith("Staging build ready"))}' \
+          > /tmp/link-comments.jsonl || : > /tmp/link-comments.jsonl
+
+        # Hide the superseded links as outdated. Best-effort: a failure here
+        # must not fail the refresh.
+        hide_stale_comments() {
+          for ID in $(jq -r 'select(.isMinimized | not) | .id' /tmp/link-comments.jsonl); do
+            gh api graphql -f id="$ID" -f query='
+              mutation($id: ID!) {
+                minimizeComment(input: { subjectId: $id, classifier: OUTDATED }) {
+                  minimizedComment { isMinimized }
+                }
+              }' --silent || echo "::warning::Could not hide stale comment $ID"
+          done
+        }
+
+        # Explain on the PR why there is no link, then fail the check.
+        fail_missing_build() {
+          echo "::error::$1"
+          printf '%s\n\nStaging builds are probably deleted %s days after they are made, by the lifecycle rule on the staging bucket. A refresh only re-signs a build that exists, so it cannot make a new one.\n\nTo get a new staging build, push a new commit to this branch. Do not close and reopen the PR: closing it deletes all of its staging builds.\n' \
+            "$1" "$RETENTION_DAYS" > /tmp/pr-comment.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md || true
+          exit 1
+        }
+
         RUN_ID="$RUN_ID_INPUT"
-        if [ -z "$RUN_ID" ]; then
-          RUN_ID=$(aws s3 ls "s3://$S3_BUCKET/$PROJECT/pr-$PR_NUMBER/" \
+        if [ -n "$RUN_ID" ]; then
+          # `aws s3 ls` exits non-zero when nothing has the prefix. The trailing
+          # slash stops run-12 from matching run-123.
+          if ! aws s3 ls "${PREFIX}run-$RUN_ID/" > /dev/null; then
+            fail_missing_build "The staging build for run $RUN_ID of PR #$PR_NUMBER is not available."
+          fi
+        else
+          RUN_ID=$(aws s3 ls "$PREFIX" \
             | awk '{print $2}' | grep '^run-' | sed 's#run-##; s#/##' | sort -V | tail -1)
         fi
+
         if [ -z "$RUN_ID" ]; then
-          echo "No staging builds found for PR #$PR_NUMBER under $PROJECT/." >&2
-          exit 1
+          # The newest "Staging build ready" comment dates the newest build. A
+          # refresh does not touch the S3 objects, so it does not reset their age.
+          LAST_STAGED=$(jq -rs 'map(select(.staged)) | last | .createdAt // empty' /tmp/link-comments.jsonl)
+          AGE_DAYS=-1
+          if [ -n "$LAST_STAGED" ]; then
+            AGE_DAYS=$(jq -rn --arg t "$LAST_STAGED" '(now - ($t | fromdateiso8601)) / 86400 | floor')
+          fi
+
+          if [ "$AGE_DAYS" -ge "$RETENTION_DAYS" ] && [ "$REBUILD_EXPIRED" = "true" ]; then
+            # Only rebuild an open PR from a branch in this repo: closing a PR
+            # deletes its builds on purpose, and a fork's code must not run with
+            # this repo's secrets.
+            PR_STATE=$(gh pr view "$PR_NUMBER" --json state,isCrossRepository \
+              --jq 'if .isCrossRepository then "FORK" else .state end')
+            if [ "$PR_STATE" = "OPEN" ]; then
+              printf 'The staging build for this PR expired: it was made %s days ago, and the staging bucket deletes builds after %s days.\n\nMaking a new staging build now ([run](%s)). Its install link will be posted here when the Stage job finishes.\n' \
+                "$AGE_DAYS" "$RETENTION_DAYS" "$RUN_URL" > /tmp/pr-comment.md
+              gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
+              hide_stale_comments
+              echo "rebuild=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "PR #$PR_NUMBER is $PR_STATE; not rebuilding."
+          fi
+
+          if [ "$AGE_DAYS" -ge 0 ]; then
+            fail_missing_build "The staging build for PR #$PR_NUMBER is not available. The newest one was made $AGE_DAYS days ago."
+          fi
+          fail_missing_build "No staging build was found for PR #$PR_NUMBER."
         fi
 
         RESULT=$(ota-publish \
@@ -109,39 +218,5 @@ jobs:
         printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
           "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
 
-        # Collect earlier install-link comments (the original "Staging build
-        # ready" from ios-ci and any prior refreshes) before posting, so the
-        # new one is never among them.
-        STALE_IDS=$(gh api graphql --paginate \
-          -f owner="${GITHUB_REPOSITORY%%/*}" \
-          -f repo="${GITHUB_REPOSITORY##*/}" \
-          -F pr="$PR_NUMBER" \
-          -f query='
-            query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
-              repository(owner: $owner, name: $repo) {
-                pullRequest(number: $pr) {
-                  comments(first: 100, after: $endCursor) {
-                    nodes { id isMinimized author { login } body }
-                    pageInfo { hasNextPage endCursor }
-                  }
-                }
-              }
-            }' \
-          --jq '.data.repository.pullRequest.comments.nodes[]
-            | select(.isMinimized | not)
-            | select(.author.login == "github-actions")
-            | select(.body | startswith("Staging build ready") or startswith("Refreshed staging install link"))
-            | .id') || STALE_IDS=""
-
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-
-        # Hide the superseded links as outdated. Best-effort: a failure here
-        # must not fail the refresh.
-        for ID in $STALE_IDS; do
-          gh api graphql -f id="$ID" -f query='
-            mutation($id: ID!) {
-              minimizeComment(input: { subjectId: $id, classifier: OUTDATED }) {
-                minimizedComment { isMinimized }
-              }
-            }' --silent || echo "::warning::Could not hide stale comment $ID"
-        done
+        hide_stale_comments
