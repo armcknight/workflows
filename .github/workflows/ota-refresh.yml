@@ -94,6 +94,11 @@ jobs:
     - name: Install ota-publish
       run: brew install armcknight/tools/tools
 
+    # Shared with ios-ci.yml. Pinned to main: a reusable workflow cannot refer
+    # to an action at its own ref.
+    - name: Set up stale-comments
+      uses: armcknight/workflows/.github/actions/stale-comments@main
+
     - name: Re-sign OTA link and comment on PR
       id: refresh
       env:
@@ -113,49 +118,10 @@ jobs:
         PREFIX="s3://$S3_BUCKET/$PROJECT/pr-$PR_NUMBER/"
         RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
-        # The PR's comments that a refresh makes stale, oldest first: install
-        # links from earlier runs (the original "Staging build ready" from ios-ci
-        # and any prior refreshes), earlier refreshes' notices (a missing build,
-        # or an expired one being rebuilt), and the `/refresh-staging` commands,
-        # this run's own included. Read before posting anything, so a comment this
-        # run posts is never among them.
-        gh api graphql --paginate \
-          -f owner="${GITHUB_REPOSITORY%%/*}" \
-          -f repo="$PROJECT" \
-          -F pr="$PR_NUMBER" \
-          -f query='
-            query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
-              repository(owner: $owner, name: $repo) {
-                pullRequest(number: $pr) {
-                  comments(first: 100, after: $endCursor) {
-                    nodes { id isMinimized createdAt author { login } body }
-                    pageInfo { hasNextPage endCursor }
-                  }
-                }
-              }
-            }' \
-          --jq '.data.repository.pullRequest.comments.nodes[]
-            | (if .author.login == "github-actions" and (.body | startswith("Staging build ready")) then "staged"
-               elif .author.login == "github-actions" and (.body | startswith("Refreshed staging install link")) then "refreshed"
-               elif .author.login == "github-actions" and (.body | startswith("The staging build for") or startswith("No staging build was found")) then "notice"
-               elif .body | startswith("/refresh-staging") then "command"
-               else empty end) as $kind
-            | {id, isMinimized, createdAt, kind: $kind}' \
-          > /tmp/stale-comments.jsonl || : > /tmp/stale-comments.jsonl
-
-        # Hide the stale comments as outdated: all of them, or only those of the
-        # kinds given as arguments. Best-effort: a failure here must not fail
-        # the refresh.
-        hide_stale_comments() {
-          for ID in $(jq -r --arg kinds "$*" 'select(.isMinimized | not) | .kind as $k | select($kinds == "" or ($kinds | split(" ") | index($k)) != null) | .id' /tmp/stale-comments.jsonl); do
-            gh api graphql -f id="$ID" -f query='
-              mutation($id: ID!) {
-                minimizeComment(input: { subjectId: $id, classifier: OUTDATED }) {
-                  minimizedComment { isMinimized }
-                }
-              }' --silent || echo "::warning::Could not hide stale comment $ID"
-          done
-        }
+        # The PR's comments that a refresh makes stale, this run's own
+        # `/refresh-staging` command included. Read before posting anything, so a
+        # comment this run posts is never among them.
+        stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
 
         # Explain on the PR why there is no link, then fail the check.
         fail_missing_build() {
@@ -166,7 +132,7 @@ jobs:
           # The commands are answered, and this notice replaces earlier ones.
           # Keep the old links visible: with an explicit run-id, another build
           # of the PR can still be there.
-          hide_stale_comments command notice
+          stale-comments hide /tmp/stale-comments.jsonl command notice
           exit 1
         }
 
@@ -201,7 +167,7 @@ jobs:
               printf 'The staging build for this PR expired: it was made %s days ago, and the staging bucket deletes builds after %s days.\n\nMaking a new staging build now ([run](%s)). Its install link will be posted here when the Stage job finishes.\n' \
                 "$AGE_DAYS" "$RETENTION_DAYS" "$RUN_URL" > /tmp/pr-comment.md
               gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-              hide_stale_comments
+              stale-comments hide /tmp/stale-comments.jsonl
               echo "rebuild=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -229,4 +195,4 @@ jobs:
           "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
 
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        hide_stale_comments
+        stale-comments hide /tmp/stale-comments.jsonl

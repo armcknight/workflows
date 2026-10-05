@@ -7,7 +7,8 @@ name: iOS CI (reusable)
 #   - repo variables: AWS_ROLE_ARN, AWS_REGION, S3_BUCKET
 #   - secrets (via `secrets: inherit`): MATCH_PASSWORD, MATCH_DEPLOY_KEY
 #   - a fastlane `test` lane and a `stage` lane that outputs <ipa-name>.ipa
-#   - Brewfile taps armcknight/tools (provides ota-publish, xcodegen, etc.)
+#   - Brewfile taps armcknight/tools and installs its tools cask
+#     (`cask 'armcknight/tools/tools'`, provides ota-publish, inject-git-info)
 #   - caller grants permissions: contents: read, checks: write,
 #     pull-requests: write, id-token: write
 #
@@ -69,7 +70,11 @@ jobs:
         bundler-cache: true
 
     - name: Install Homebrew dependencies
-      run: brew bundle
+      run: |
+        # Homebrew refuses to load formulae and casks from an untrusted tap, and
+        # `brew bundle` does not trust the Brewfile's taps for us.
+        brew trust armcknight/tools
+        brew bundle
 
     - name: Generate Xcode project
       env:
@@ -162,7 +167,11 @@ jobs:
         bundler-cache: true
 
     - name: Install Homebrew dependencies
-      run: brew bundle
+      run: |
+        # Homebrew refuses to load formulae and casks from an untrusted tap, and
+        # `brew bundle` does not trust the Brewfile's taps for us.
+        brew trust armcknight/tools
+        brew bundle
 
     - name: Generate Xcode project
       env:
@@ -208,6 +217,11 @@ jobs:
         aws-region: ${{ vars.AWS_REGION }}
         role-duration-seconds: ${{ env.LINK_TTL_SECONDS }}
 
+    # Shared with ota-refresh.yml. Pinned to main: a reusable workflow cannot
+    # refer to an action at its own ref.
+    - name: Set up stale-comments
+      uses: armcknight/workflows/.github/actions/stale-comments@main
+
     - name: Publish OTA build to S3 and comment on PR
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -237,4 +251,9 @@ jobs:
         printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed._\n' \
           "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
 
+        # A new build makes the PR's earlier install links, refresh notices and
+        # `/refresh-staging` commands stale. Read them before posting, so the new
+        # comment is never among them.
+        stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
+        stale-comments hide /tmp/stale-comments.jsonl

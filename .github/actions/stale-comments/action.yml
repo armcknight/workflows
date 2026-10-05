@@ -1,0 +1,12 @@
+name: Stale staging comments
+description: >
+  Put the `stale-comments` script on PATH, so later steps can collect the PR
+  comments that a new staging link makes stale and hide them. Shared by
+  ios-ci.yml and ota-refresh.yml.
+
+runs:
+  using: composite
+  steps:
+  - name: Add stale-comments to PATH
+    shell: bash
+    run: echo "$GITHUB_ACTION_PATH" >> "$GITHUB_PATH"

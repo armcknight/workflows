@@ -44,6 +44,16 @@ edit a caller applies.
   `ios-ci.yml` for the PR. See the README's refresh caller example.
 - **ios-ci**: new optional input `pr-number`, to build a PR's head from an event
   other than `pull_request`. Unused under `pull_request`.
+- **ios-ci**: after the Stage job posts its install link, hide the PR's stale
+  comments the same way ota-refresh does. Both workflows share this through the
+  new `stale-comments` composite action. No caller change.
+
+### Fixed
+
+- **ios-ci**: trust the `armcknight/tools` tap before `brew bundle`, which
+  Homebrew now refuses to load from an untrusted tap. A caller's `Brewfile`
+  must install the tools as a cask, `cask 'armcknight/tools/tools'`: the tap no
+  longer has a formula of that name.
 
 ## [2.1.0] 2026-08-10
 

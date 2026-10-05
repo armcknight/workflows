@@ -30,7 +30,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 
 | File | Trigger (in caller) | What it does |
 |------|--------------------|--------------|
-| `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link. |
+| `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link, and hide the PR's stale install links, refresh notices and `/refresh-staging` commands. |
 | `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
@@ -218,7 +218,10 @@ reusable workflows; only secrets need `inherit`):
 
 **In-repo build setup** the workflow invokes:
 - a fastlane `test` lane and a `stage` lane that outputs `<ipa-name>.ipa`
-- `Brewfile` taps `armcknight/tools` (provides `ota-publish`, `xcodegen`, …)
+- `Brewfile` taps `armcknight/tools` and installs its tools **cask** —
+  `cask 'armcknight/tools/tools'`, not `brew`, because the tap has no formulae
+  (provides `ota-publish`, `inject-git-info`, …). The workflow trusts the tap
+  before `brew bundle`.
 - ad-hoc signing: an `.adhoc` App ID in the `Matchfile`, an `<APP>_VARIANT`
   xcconfig selector so `stage` can ad-hoc-sign while archiving under `Release`
   (needed because the Sentry cross-project reference only defines Debug/Release),
