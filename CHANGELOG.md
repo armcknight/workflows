@@ -44,12 +44,21 @@ edit a caller applies.
   `ios-ci.yml` for the PR. See the README's refresh caller example.
 - **ios-ci**: new optional input `pr-number`, to build a PR's head from an event
   other than `pull_request`. Unused under `pull_request`.
+- **ios-ci**, **ota-refresh**: the install-link comment also says when the
+  build itself is deleted, as read from the staging bucket's lifecycle rule
+  (`head-object` on the build's `metadata.json`). The line is left out when no
+  rule applies. Shared through the new `build-expiry` composite action. No
+  caller change.
 - **ios-ci**: after the Stage job posts its install link, hide the PR's stale
   comments the same way ota-refresh does. Both workflows share this through the
   new `stale-comments` composite action. No caller change.
 
 ### Fixed
 
+- **ota-refresh**: decide that a build exists by its `metadata.json`, not by
+  its `run-*` prefix. A refresh uploads `manifest.plist` and `install.html`
+  again, so after an earlier refresh the prefix outlives the build, and the
+  refresh failed inside `ota-publish` instead of explaining the missing build.
 - **ios-ci**: trust the `armcknight/tools` tap before `brew bundle`, which
   Homebrew now refuses to load from an untrusted tap. A caller's `Brewfile`
   must install the tools as a cask, `cask 'armcknight/tools/tools'`: the tap no

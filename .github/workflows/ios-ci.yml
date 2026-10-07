@@ -222,6 +222,9 @@ jobs:
     - name: Set up stale-comments
       uses: armcknight/workflows/.github/actions/stale-comments@main
 
+    - name: Set up build-expiry
+      uses: armcknight/workflows/.github/actions/build-expiry@main
+
     - name: Publish OTA build to S3 and comment on PR
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -250,6 +253,11 @@ jobs:
 
         printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed._\n' \
           "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
+        BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
+        if [ -n "$BUILD_EXPIRES" ]; then
+          printf '\n_The build itself is deleted %s, by the lifecycle rule on the staging bucket._\n' \
+            "$BUILD_EXPIRES" >> /tmp/pr-comment.md
+        fi
 
         # A new build makes the PR's earlier install links, refresh notices and
         # `/refresh-staging` commands stale. Read them before posting, so the new

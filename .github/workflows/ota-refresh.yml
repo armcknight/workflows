@@ -99,6 +99,9 @@ jobs:
     - name: Set up stale-comments
       uses: armcknight/workflows/.github/actions/stale-comments@main
 
+    - name: Set up build-expiry
+      uses: armcknight/workflows/.github/actions/build-expiry@main
+
     - name: Re-sign OTA link and comment on PR
       id: refresh
       env:
@@ -136,21 +139,34 @@ jobs:
           exit 1
         }
 
+        # A run's build is there only while its metadata.json is. ota-publish
+        # uploads it with the IPA, once, so the lifecycle rule deletes them
+        # together; a refresh uploads manifest.plist and install.html again, so
+        # the run's prefix can outlive the build. `aws s3 ls` exits non-zero when
+        # nothing has the key.
+        build_exists() {
+          aws s3 ls "${PREFIX}run-$1/metadata.json" > /dev/null
+        }
+
         RUN_ID="$RUN_ID_INPUT"
         if [ -n "$RUN_ID" ]; then
-          # `aws s3 ls` exits non-zero when nothing has the prefix. The trailing
-          # slash stops run-12 from matching run-123.
-          if ! aws s3 ls "${PREFIX}run-$RUN_ID/" > /dev/null; then
+          if ! build_exists "$RUN_ID"; then
             fail_missing_build "The staging build for run $RUN_ID of PR #$PR_NUMBER is not available."
           fi
         else
           RUN_ID=$(aws s3 ls "$PREFIX" \
             | awk '{print $2}' | grep '^run-' | sed 's#run-##; s#/##' | sort -V | tail -1)
+          # Every older run is older still, so when the newest build is gone,
+          # all of them are.
+          if [ -n "$RUN_ID" ] && ! build_exists "$RUN_ID"; then
+            RUN_ID=""
+          fi
         fi
 
         if [ -z "$RUN_ID" ]; then
           # The newest "Staging build ready" comment dates the newest build. A
-          # refresh does not touch the S3 objects, so it does not reset their age.
+          # refresh does not upload the IPA or metadata.json again, so it does not
+          # reset the build's age.
           LAST_STAGED=$(jq -rs 'map(select(.kind == "staged")) | last | .createdAt // empty' /tmp/stale-comments.jsonl)
           AGE_DAYS=-1
           if [ -n "$LAST_STAGED" ]; then
@@ -190,9 +206,14 @@ jobs:
           --ttl "$LINK_TTL_SECONDS")
         LANDING=$(echo "$RESULT" | jq -r '.landingUrl')
         EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
+        BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
 
         printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
           "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
+        if [ -n "$BUILD_EXPIRES" ]; then
+          printf '\n_The build itself is deleted %s, by the lifecycle rule on the staging bucket._\n' \
+            "$BUILD_EXPIRES" >> /tmp/pr-comment.md
+        fi
 
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
         stale-comments hide /tmp/stale-comments.jsonl

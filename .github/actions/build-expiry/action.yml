@@ -1,0 +1,12 @@
+name: Staging build expiry
+description: >
+  Put the `build-expiry` script on PATH, so later steps can read when the
+  staging bucket's lifecycle rule deletes a build. Shared by ios-ci.yml and
+  ota-refresh.yml.
+
+runs:
+  using: composite
+  steps:
+  - name: Add build-expiry to PATH
+    shell: bash
+    run: echo "$GITHUB_ACTION_PATH" >> "$GITHUB_PATH"
