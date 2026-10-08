@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [2.2.0] 2026-10-08
+
 ### Added
 
 - **ota-refresh**: after it posts the refreshed install link, hide the PR's
