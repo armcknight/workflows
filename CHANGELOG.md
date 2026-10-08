@@ -44,6 +44,16 @@ edit a caller applies.
   `ios-ci.yml` for the PR. See the README's refresh caller example.
 - **ios-ci**: new optional input `pr-number`, to build a PR's head from an event
   other than `pull_request`. Unused under `pull_request`.
+- **ios-ci**: an optional `ui-screenshots` job, turned on by the new
+  `ui-screenshots-scheme` and `ui-screenshots-path` inputs (with optional
+  `ui-screenshots-target` and `ui-screenshots-destination`). Under
+  `pull_request` it runs the UI test classes the PR adds or changes, plus any
+  test named in a `<!-- ui-screenshots: … -->` marker in the PR description,
+  on a simulator. It pushes the screenshots they attach to an orphan
+  `ui-screenshots` branch and comments them on the PR, in a captioned table
+  per test. A caller that turns
+  it on must grant `contents: write`. Callers that leave it off are
+  unaffected.
 - **ios-ci**, **ota-refresh**: the install-link comment also says when the
   build itself is deleted, as read from the staging bucket's lifecycle rule
   (`head-object` on the build's `metadata.json`). The line is left out when no

@@ -6,10 +6,9 @@
 #     {id, isMinimized, createdAt, kind}. Run it before posting a new comment,
 #     so that comment is never among them. On failure, <file> is left empty.
 #
-#   stale-comments hide <file> [kind...]
-#     Hide the comments in <file> as outdated: all of them, or only those of
-#     the given kinds. Best-effort: a comment that cannot be hidden is a
-#     warning, never a failure.
+#   stale-comments hide <file> <kind...>
+#     Hide the comments in <file> of the given kinds as outdated. Best-effort:
+#     a comment that cannot be hidden is a warning, never a failure.
 #
 # Kinds:
 #   staged     ios-ci's "Staging build ready" install link
@@ -17,6 +16,7 @@
 #   notice     ota-refresh's notices: a missing build, or an expired one being
 #              rebuilt
 #   command    a `/refresh-staging` comment, from anyone
+#   media      ios-ci's "UI screenshots" of the PR's UI tests
 #
 # Needs GH_TOKEN with pull-requests: write, and GITHUB_REPOSITORY.
 
@@ -43,6 +43,7 @@ collect() {
       | (if .author.login == "github-actions" and (.body | startswith("Staging build ready")) then "staged"
          elif .author.login == "github-actions" and (.body | startswith("Refreshed staging install link")) then "refreshed"
          elif .author.login == "github-actions" and (.body | startswith("The staging build for") or startswith("No staging build was found")) then "notice"
+         elif .author.login == "github-actions" and (.body | startswith("UI screenshots")) then "media"
          elif .body | startswith("/refresh-staging") then "command"
          else empty end) as $kind
       | {id, isMinimized, createdAt, kind: $kind}' \
@@ -54,11 +55,12 @@ collect() {
 
 hide() {
   local file="$1"; shift
+  [ $# -gt 0 ] || { echo "stale-comments hide: name at least one kind" >&2; exit 2; }
   local id
   for id in $(jq -r --arg kinds "$*" '
       select(.isMinimized | not)
       | .kind as $k
-      | select($kinds == "" or ($kinds | split(" ") | index($k)) != null)
+      | select(($kinds | split(" ") | index($k)) != null)
       | .id' "$file"); do
     gh api graphql -f id="$id" -f query='
       mutation($id: ID!) {
@@ -72,5 +74,5 @@ hide() {
 case "${1:-}" in
   collect) shift; collect "$@" ;;
   hide) shift; hide "$@" ;;
-  *) echo "usage: stale-comments collect <pr-number> <file> | hide <file> [kind...]" >&2; exit 2 ;;
+  *) echo "usage: stale-comments collect <pr-number> <file> | hide <file> <kind...>" >&2; exit 2 ;;
 esac

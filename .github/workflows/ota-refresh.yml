@@ -183,7 +183,7 @@ jobs:
               printf 'The staging build for this PR expired: it was made %s days ago, and the staging bucket deletes builds after %s days.\n\nMaking a new staging build now ([run](%s)). Its install link will be posted here when the Stage job finishes.\n' \
                 "$AGE_DAYS" "$RETENTION_DAYS" "$RUN_URL" > /tmp/pr-comment.md
               gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-              stale-comments hide /tmp/stale-comments.jsonl
+              stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command
               echo "rebuild=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -216,4 +216,4 @@ jobs:
         fi
 
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        stale-comments hide /tmp/stale-comments.jsonl
+        stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command

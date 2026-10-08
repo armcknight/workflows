@@ -30,7 +30,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 
 | File | Trigger (in caller) | What it does |
 |------|--------------------|--------------|
-| `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link and the time the bucket deletes the build, and hide the PR's stale install links, refresh notices and `/refresh-staging` commands. |
+| `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link and the time the bucket deletes the build, and hide the PR's stale install links, refresh notices and `/refresh-staging` commands. Optional `ui-screenshots` job beside them: run the UI tests the PR adds or changes and comment their screenshots. |
 | `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
@@ -55,6 +55,31 @@ S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run
 | `arkana-keys` | yes | Space-separated arkana key **names**. Values are resolved from the caller's secrets by name, so no secret values pass through `with:`. |
 | `run-tests` | no (`true`) | Run the fastlane `test` lane first. Set `false` for apps with no unit-test scheme. |
 | `pr-number` | no (none) | PR to build when the trigger is not `pull_request`, such as the rebuild job in the refresh caller below. Leave it out under `pull_request`. |
+| `ui-screenshots-scheme` | no (none) | Scheme that runs the UI tests. Setting it turns on the `ui-screenshots` job. |
+| `ui-screenshots-path` | with the scheme | Directory of the UI test sources. Each `XCTestCase` class in a Swift file the PR adds or changes there is run with `-only-testing`, along with any test the PR description names (below). |
+| `ui-screenshots-target` | no (the scheme) | UI test target name, for `-only-testing`. |
+| `ui-screenshots-destination` | no (newest iPhone simulator) | `xcodebuild` destination. |
+
+A PR can also name tests it does not change — say, an existing test that goes
+to the screen a fix changes — in a hidden marker in its description:
+
+```html
+<!-- ui-screenshots: DailyRollupUITests/testHistorySummaryAndAllEventsModes, OtherTests -->
+```
+
+IDs are `[<target>/]<class>[/<method>]`, separated by spaces, commas or
+newlines. The job reads the description of the event that started the run, so
+an edit to the description takes effect on the next push.
+
+The `ui-screenshots` job runs only under `pull_request`. It collects the PNGs
+the tests attach (`XCTAttachment` with `lifetime = .keepAlways`), commits them
+to an orphan `ui-screenshots` branch under `pr-<n>/<sha7>/`, and comments them
+on the PR, one captioned table per test, hiding its earlier screenshot
+comment. The images are linked as
+`blob/ui-screenshots/…?raw=true`, which GitHub serves from a private repo to
+signed-in viewers who can read it. Because it pushes that branch, the caller
+must grant `contents: write`; the other jobs still ask for read only. A failed
+UI test still posts its screenshots, then fails the job.
 
 `ota-refresh.yml`: `pr-number` (required), `run-id` (optional — defaults to the
 PR's newest build), `comment-id` (optional — the comment to react to),

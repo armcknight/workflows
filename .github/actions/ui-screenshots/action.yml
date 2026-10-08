@@ -1,0 +1,12 @@
+name: UI screenshots
+description: >
+  Put the `ui-screenshots` script on PATH, so later steps can find the UI tests
+  a PR adds or changes, pick a simulator, and publish the screenshots those
+  tests attach. Used by ios-ci.yml's ui-screenshots job.
+
+runs:
+  using: composite
+  steps:
+  - name: Add ui-screenshots to PATH
+    shell: bash
+    run: echo "$GITHUB_ACTION_PATH" >> "$GITHUB_PATH"

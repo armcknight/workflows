@@ -12,6 +12,11 @@ name: iOS CI (reusable)
 #   - caller grants permissions: contents: read, checks: write,
 #     pull-requests: write, id-token: write
 #
+# Optional: set `ui-screenshots-scheme` and `ui-screenshots-path` to run the UI
+# tests a PR adds or changes on a simulator and comment their screenshots on the
+# PR. That job also needs the caller to grant contents: write, because it pushes
+# the images to an orphan `ui-screenshots` branch.
+#
 # Normally triggered by `pull_request`. To build a PR from another event (as the
 # refresh workflow's rebuild of an expired staging build does), pass `pr-number`
 # and the jobs check out that PR's head instead of the triggering ref.
@@ -34,6 +39,26 @@ on:
         default: true
       pr-number:
         description: "PR to build when the trigger is not `pull_request` (for example, a rebuild from the refresh workflow). Leave empty under `pull_request`."
+        required: false
+        type: string
+        default: ""
+      ui-screenshots-scheme:
+        description: "Scheme that runs the UI tests. Setting it turns on the ui-screenshots job, which runs only under `pull_request`."
+        required: false
+        type: string
+        default: ""
+      ui-screenshots-path:
+        description: "Directory of the UI test sources. A test class in a Swift file the PR adds or changes there is run."
+        required: false
+        type: string
+        default: ""
+      ui-screenshots-target:
+        description: "UI test target, for `-only-testing`. Defaults to the scheme name."
+        required: false
+        type: string
+        default: ""
+      ui-screenshots-destination:
+        description: "xcodebuild destination. Defaults to the newest available iPhone simulator."
         required: false
         type: string
         default: ""
@@ -260,8 +285,148 @@ jobs:
         fi
 
         # A new build makes the PR's earlier install links, refresh notices and
-        # `/refresh-staging` commands stale. Read them before posting, so the new
+        # `/refresh-staging` commands stale (not its UI screenshots, which the
+        # ui-screenshots job replaces itself). Read them before posting, so the new
         # comment is never among them.
         stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        stale-comments hide /tmp/stale-comments.jsonl
+        stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command
+
+  ui-screenshots:
+    name: UI screenshots
+    # Runs beside the other jobs: it only reports, so nothing waits on it.
+    if: inputs.ui-screenshots-scheme != '' && github.event_name == 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        # The default merge commit and its first parent, the base branch, so
+        # `HEAD^1..HEAD` is exactly the PR's change.
+        fetch-depth: 2
+
+    # Pinned to main: a reusable workflow cannot refer to an action at its own
+    # ref.
+    - name: Set up ui-screenshots
+      uses: armcknight/workflows/.github/actions/ui-screenshots@main
+
+    - name: Set up stale-comments
+      uses: armcknight/workflows/.github/actions/stale-comments@main
+
+    - name: Find the UI tests this PR adds or changes
+      id: tests
+      env:
+        TEST_DIR: ${{ inputs.ui-screenshots-path }}
+        TEST_TARGET: ${{ inputs.ui-screenshots-target || inputs.ui-screenshots-scheme }}
+        # Read for its `<!-- ui-screenshots: … -->` marker. An env var, never
+        # inlined into the script: anyone who can edit the PR writes it.
+        PR_BODY: ${{ github.event.pull_request.body }}
+      run: |
+        if [ -z "$TEST_DIR" ]; then
+          echo "::error::Set ui-screenshots-path along with ui-screenshots-scheme."
+          exit 1
+        fi
+        ONLY_TESTING=$(ui-screenshots tests "$TEST_DIR" "$TEST_TARGET")
+        echo "only-testing=$ONLY_TESTING" >> "$GITHUB_OUTPUT"
+        if [ -z "$ONLY_TESTING" ]; then
+          echo "This PR adds or changes no UI tests under $TEST_DIR and names none in a ui-screenshots marker; nothing to screenshot."
+        else
+          echo "Running: $ONLY_TESTING"
+        fi
+
+    - name: Setup Ruby
+      if: steps.tests.outputs.only-testing != ''
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3.0'
+        bundler-cache: true
+
+    - name: Install Homebrew dependencies
+      if: steps.tests.outputs.only-testing != ''
+      run: |
+        # Homebrew refuses to load formulae and casks from an untrusted tap, and
+        # `brew bundle` does not trust the Brewfile's taps for us.
+        brew trust armcknight/tools
+        brew bundle
+
+    - name: Generate Xcode project
+      if: steps.tests.outputs.only-testing != ''
+      env:
+        # The caller names the arkana keys it needs (inputs.arkana-keys); their
+        # values come from the caller's own secrets via `secrets: inherit`. This
+        # keeps the workflow app-agnostic — it knows no specific key names. arkana
+        # hard-fails if a key declared in the app's .arkana.yml is absent, so a
+        # missing secret fails the build loudly (no silent stubs).
+        ALL_SECRETS: ${{ toJSON(secrets) }}
+        ARKANA_KEYS: ${{ inputs.arkana-keys }}
+      run: |
+        # Materialize gitignored config files (e.g. .envrc) from committed
+        # templates so xcodegen fileGroups validate.
+        for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
+        # Resolve each requested key from the inherited secrets (case-insensitive,
+        # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
+        : > .env
+        for key in $ARKANA_KEYS; do
+          val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
+          [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
+        done
+        bundle exec arkana
+        xcodegen
+
+    - name: Run the UI tests
+      id: run
+      if: steps.tests.outputs.only-testing != ''
+      env:
+        SCHEME: ${{ inputs.ui-screenshots-scheme }}
+        DESTINATION: ${{ inputs.ui-screenshots-destination }}
+        ONLY_TESTING: ${{ steps.tests.outputs.only-testing }}
+      run: |
+        DESTINATION="${DESTINATION:-$(ui-screenshots destination)}"
+        # Keep going when a test fails: its screenshots, and the one XCTest
+        # takes at the failure, are what explain it. The publish step fails the
+        # job afterwards.
+        set +e
+        # shellcheck disable=SC2086 # ONLY_TESTING is one argument per test class.
+        xcodebuild test \
+          -scheme "$SCHEME" \
+          -destination "$DESTINATION" \
+          -resultBundlePath ui-screenshots.xcresult \
+          $ONLY_TESTING \
+          CODE_SIGNING_ALLOWED=NO \
+          | xcbeautify
+        STATUS=${PIPESTATUS[0]}
+        set -e
+        if [ "$STATUS" -eq 0 ]; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Comment the screenshots on the PR
+      if: ${{ !cancelled() && steps.run.outcome != 'skipped' && steps.tests.outputs.only-testing != '' }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        SHA: ${{ github.event.pull_request.head.sha }}
+        PASSED: ${{ steps.run.outputs.passed }}
+      run: |
+        if [ -d ui-screenshots.xcresult ]; then
+          ui-screenshots publish ui-screenshots.xcresult "$PR_NUMBER" "$SHA" "${PASSED:-false}" /tmp/ui-screenshots.md
+        else
+          echo "The UI tests made no result bundle."
+        fi
+        if [ -s /tmp/ui-screenshots.md ]; then
+          # Only the newest set of screenshots stays visible.
+          stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
+          gh pr comment "$PR_NUMBER" --body-file /tmp/ui-screenshots.md
+          stale-comments hide /tmp/stale-comments.jsonl media
+        fi
+        if [ "$PASSED" != "true" ]; then
+          echo "::error::The UI tests failed."
+          exit 1
+        fi
