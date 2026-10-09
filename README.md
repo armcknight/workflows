@@ -2,8 +2,8 @@
 
 Reusable GitHub Actions workflows shared across armcknight repos. Four areas:
 
-- **staging OTA** (iOS) — on every PR, run tests, then build an ad-hoc IPA and
-  publish a presigned [`itms-services`](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices)
+- **staging OTA** (iOS) — on every PR, run tests. On a `/staging-build`
+  comment, build an ad-hoc IPA and publish a presigned [`itms-services`](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices)
   over-the-air install link to a private S3 bucket, commented on the PR.
 - **macOS cask release** — on a version tag, build, sign, and notarize a macOS
   app, then publish it through the `armcknight/homebrew-tools` Homebrew tap.
@@ -30,8 +30,8 @@ wrap in an `install.html` landing page → emit a link) is done by the
 
 | File | Trigger (in caller) | What it does |
 |------|--------------------|--------------|
-| `ios-ci.yml` | `pull_request` | `test` job, then `stage` job (`needs: test`): build the ad-hoc IPA, upload to S3, comment a 12 h install link and the time the bucket deletes the build, and hide the PR's stale install links, refresh notices and `/refresh-staging` commands. Optional `ui-screenshots` job beside them: run the UI tests the PR adds or changes and comment their screenshots. |
-| `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
+| `ios-ci.yml` | `pull_request`, and `issue_comment` `/staging-build` | Under `pull_request`: the `test` job, and the optional `ui-screenshots` job beside it, which runs the UI tests the PR adds or changes and comments their screenshots. On a `/staging-build` comment (with `pr-number` set): the `authorize` job, then `test`, then the `stage` job: build the ad-hoc IPA, upload to S3, comment a 12 h install link and the time the bucket deletes the build, and hide the PR's stale install links, refresh notices and `/refresh-staging` and `/staging-build` commands. |
+| `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` and `/staging-build` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
 | `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package. |
@@ -54,7 +54,7 @@ S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run
 | `ipa-name` | yes | Base name of the IPA produced by `fastlane stage`, without `.ipa`. |
 | `arkana-keys` | yes | Space-separated arkana key **names**. Values are resolved from the caller's secrets by name, so no secret values pass through `with:`. |
 | `run-tests` | no (`true`) | Run the fastlane `test` lane first. Set `false` for apps with no unit-test scheme. |
-| `pr-number` | no (none) | PR to build when the trigger is not `pull_request`, such as the rebuild job in the refresh caller below. Leave it out under `pull_request`. |
+| `pr-number` | no (none) | PR to stage when the trigger is not `pull_request`: the `/staging-build` caller or the rebuild job in the refresh caller below. Setting it is what makes a staging build. Leave it out under `pull_request`. |
 | `ui-screenshots-scheme` | no (none) | Scheme that runs the UI tests. Setting it turns on the `ui-screenshots` job. |
 | `ui-screenshots-path` | with the scheme | Directory of the UI test sources. Each `XCTestCase` class in a Swift file the PR adds or changes there is run with `-only-testing`, along with any test the PR description names (below). |
 | `ui-screenshots-target` | no (the scheme) | UI test target name, for `-only-testing`. |
@@ -80,6 +80,13 @@ comment. The images are linked as
 signed-in viewers who can read it. Because it pushes that branch, the caller
 must grant `contents: write`; the other jobs still ask for read only. A failed
 UI test still posts its screenshots, then fails the job.
+
+A staging build is on demand: under `pull_request` there is no `stage` job, so a
+push costs only the tests. When the trigger is not `pull_request`, the
+`authorize` job runs before any job checks out the PR's code. It refuses a
+commenter who cannot write to the repo, a missing `pr-number`, and a PR that is
+closed or from a fork, and reacts 👀 to the comment. Then `test` runs (unless
+`run-tests` is `false`), and `stage` runs only if the tests pass.
 
 `ota-refresh.yml`: `pr-number` (required), `run-id` (optional — defaults to the
 PR's newest build), `comment-id` (optional — the comment to react to),
@@ -339,6 +346,35 @@ jobs:
     secrets: inherit
 ```
 
+`.github/workflows/staging-build.yml`:
+
+```yaml
+name: Staging build
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+  id-token: write
+jobs:
+  stage:
+    # Gate on the commenter, not only on the command text: the build runs the
+    # PR's code with the repo's secrets and mints a presigned install link.
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/staging-build') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    uses: armcknight/workflows/.github/workflows/ios-ci.yml@1
+    with:
+      # The same ios-ci inputs as ci.yml.
+      ipa-name: MyApp-staging
+      arkana-keys: SentryDSN FeedbackEmail
+      pr-number: ${{ github.event.issue.number }}
+    secrets: inherit
+```
+
 `.github/workflows/refresh-staging-link.yml`:
 
 ```yaml
@@ -439,13 +475,14 @@ jobs:
   be "Accessible from repositories owned by the user account.")
 - Installs are **ad-hoc**: a tester's device UDID must be in the `match adhoc`
   provisioning profile.
-- `ota-refresh.yml` re-checks `author_association` itself on `issue_comment`
-  events, so a caller that omits the `if:` gate above fails closed instead of
-  giving any commenter an install link. Keep the gate in the caller anyway — it
-  stops the job before it assumes the AWS role.
+- `ota-refresh.yml` and the `authorize` job of `ios-ci.yml` re-check
+  `author_association` themselves on `issue_comment` events, so a caller that
+  omits the `if:` gates above fails closed instead of giving any commenter an
+  install link. Keep the gates in the caller anyway — they stop the run before
+  it starts a runner.
 - `issue_comment` and `workflow_run` triggers always run the **default-branch**
-  copy of the *caller's* workflow, so `/refresh-staging` only works once the
-  caller's workflow is on its default branch.
+  copy of the *caller's* workflow, so `/staging-build` and `/refresh-staging`
+  only work once the caller's workflows are on its default branch.
 - Pin callers to the moving major tag, `@1`, not to `@main`. `@main` gets a
   breaking change the moment it merges, with no release note to warn you. See
   [Versioning and pinning](#versioning-and-pinning).

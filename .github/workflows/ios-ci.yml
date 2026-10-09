@@ -1,7 +1,10 @@
 name: iOS CI (reusable)
 
-# Reusable PR pipeline for armcknight iOS apps: run tests, then (only if tests
-# pass) build an ad-hoc staging IPA and publish a presigned OTA install link.
+# Reusable PR pipeline for armcknight iOS apps. Under `pull_request` it runs the
+# tests (and the optional UI screenshots) only. A staging build is on demand: the
+# caller runs this workflow again from a `/staging-build` PR comment with
+# `pr-number` set, and then, only if the tests pass, it builds an ad-hoc staging
+# IPA and publishes a presigned OTA install link (see README).
 #
 # Caller requirements:
 #   - repo variables: AWS_ROLE_ARN, AWS_REGION, S3_BUCKET
@@ -17,9 +20,10 @@ name: iOS CI (reusable)
 # PR. That job also needs the caller to grant contents: write, because it pushes
 # the images to an orphan `ui-screenshots` branch.
 #
-# Normally triggered by `pull_request`. To build a PR from another event (as the
-# refresh workflow's rebuild of an expired staging build does), pass `pr-number`
-# and the jobs check out that PR's head instead of the triggering ref.
+# Under any event other than `pull_request` (a `/staging-build` comment, or the
+# refresh workflow's rebuild of an expired staging build), pass `pr-number`. The
+# Authorize job then checks the request, and the jobs check out that PR's head
+# instead of the triggering ref.
 
 on:
   workflow_call:
@@ -38,7 +42,7 @@ on:
         type: boolean
         default: true
       pr-number:
-        description: "PR to build when the trigger is not `pull_request` (for example, a rebuild from the refresh workflow). Leave empty under `pull_request`."
+        description: "PR to stage when the trigger is not `pull_request` (a `/staging-build` comment, or a rebuild from the refresh workflow). Setting it is what makes a staging build. Leave empty under `pull_request`."
         required: false
         type: string
         default: ""
@@ -70,9 +74,54 @@ env:
   FASTLANE_XCODEBUILD_SETTINGS_RETRIES: "10"
 
 jobs:
+  # A staging build runs the PR's code with the caller's secrets and mints an
+  # install link, so check the request before any job checks the code out. The
+  # caller is told to gate its `issue_comment` trigger too; this check makes a
+  # caller that forgets fail closed.
+  authorize:
+    name: Authorize
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+    - name: Check the staging request
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+        EVENT: ${{ github.event_name }}
+        ASSOCIATION: ${{ github.event.comment.author_association }}
+        COMMENT_ID: ${{ github.event.comment.id }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        if [ -z "$PR_NUMBER" ]; then
+          echo "::error::Set pr-number to stage a PR outside pull_request." >&2
+          exit 1
+        fi
+        if [ "$EVENT" = "issue_comment" ]; then
+          case "$ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) echo "Commenter is $ASSOCIATION; continuing." ;;
+            *) echo "::error::Commenter is $ASSOCIATION, which cannot write to this repo. Refusing to stage." >&2; exit 1 ;;
+          esac
+          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content=eyes --silent || true
+        fi
+        # A fork's code must not run with this repo's secrets, and closing a PR
+        # deletes its staging builds on purpose.
+        PR_STATE=$(gh pr view "$PR_NUMBER" --json state,isCrossRepository \
+          --jq 'if .isCrossRepository then "FORK" else .state end')
+        if [ "$PR_STATE" != "OPEN" ]; then
+          echo "::error::PR #$PR_NUMBER is $PR_STATE; only an open PR from a branch in this repo is staged." >&2
+          exit 1
+        fi
+
   test:
     name: Test
-    if: inputs.run-tests
+    # Under `pull_request`, Authorize is skipped. Otherwise the PR's code runs
+    # only after Authorize passes.
+    needs: authorize
+    if: ${{ !cancelled() && inputs.run-tests && needs.authorize.result != 'failure' }}
     runs-on: macos-26
     timeout-minutes: 10
     permissions:
@@ -148,10 +197,11 @@ jobs:
 
   stage:
     name: Stage
-    # Run after tests pass — or when tests were skipped (run-tests: false) — but
+    # Only on demand (never under `pull_request`), after Authorize passes, and
+    # after the tests pass — or when they were skipped (run-tests: false) — but
     # never when they failed.
-    needs: test
-    if: ${{ !cancelled() && needs.test.result != 'failure' }}
+    needs: [authorize, test]
+    if: ${{ !cancelled() && needs.authorize.result == 'success' && needs.test.result != 'failure' }}
     runs-on: macos-26
     timeout-minutes: 10
     permissions:
@@ -167,7 +217,6 @@ jobs:
     # head branch.
     - name: Resolve PR head branch
       id: pr
-      if: github.event_name != 'pull_request' && inputs.pr-number != ''
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
@@ -183,7 +232,7 @@ jobs:
         # merge commit, so inject-git-info records the real branch and commit in
         # the staged IPA (otherwise GIT_BRANCH=HEAD and GIT_COMMIT_HASH is the
         # ephemeral merge SHA).
-        ref: ${{ github.head_ref || steps.pr.outputs.head-ref }}
+        ref: ${{ steps.pr.outputs.head-ref }}
 
     - name: Setup Ruby
       uses: ruby/setup-ruby@v1
@@ -256,13 +305,11 @@ jobs:
         S3_BUCKET: ${{ vars.S3_BUCKET }}
         AWS_REGION: ${{ vars.AWS_REGION }}
         PROJECT: ${{ github.event.repository.name }}
-        PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr-number }}
+        PR_NUMBER: ${{ inputs.pr-number }}
         RUN_ID: ${{ github.run_id }}
-        SHA: ${{ github.event.pull_request.head.sha }}
         IPA_NAME: ${{ inputs.ipa-name }}
       run: |
-        # Outside `pull_request` there is no event SHA; use the checked-out head.
-        SHA="${SHA:-$(git rev-parse HEAD)}"
+        SHA=$(git rev-parse HEAD)
         RESULT=$(ota-publish \
           --mode initial \
           --ipa "${IPA_NAME}.ipa" \
@@ -276,7 +323,7 @@ jobs:
         EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
         RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
 
-        printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed._\n' \
+        printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed. Comment `/staging-build` for a new build of the newest commit._\n' \
           "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
         BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
         if [ -n "$BUILD_EXPIRES" ]; then
@@ -285,9 +332,9 @@ jobs:
         fi
 
         # A new build makes the PR's earlier install links, refresh notices and
-        # `/refresh-staging` commands stale (not its UI screenshots, which the
-        # ui-screenshots job replaces itself). Read them before posting, so the new
-        # comment is never among them.
+        # `/refresh-staging` and `/staging-build` commands stale (not its UI
+        # screenshots, which the ui-screenshots job replaces itself). Read them
+        # before posting, so the new comment is never among them.
         stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
         stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command

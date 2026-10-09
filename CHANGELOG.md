@@ -23,6 +23,25 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Changed
+
+- **ios-ci**: a staging build is on demand. Under `pull_request` the workflow
+  runs only the tests and the UI screenshots; the Stage job runs only when the
+  caller sets `pr-number` from another event, such as a `/staging-build` PR
+  comment. A new Authorize job runs first in that case, before any job checks
+  out the PR's code: it refuses a commenter who cannot write to the repo, a
+  missing `pr-number`, and a PR that is closed or from a fork, and it reacts to
+  the comment. The install-link comment names `/staging-build` for a new build.
+- **ota-refresh**: when the build is missing, the comment tells you to comment
+  `/staging-build`, not to push a new commit.
+- **stale-comments**: `/staging-build` comments are hidden as answered, the
+  same as `/refresh-staging` comments.
+
+  ### Caller migration
+  iOS apps that want staging builds: add `.github/workflows/staging-build.yml`
+  from the README's caller examples, with the same `ipa-name` and `arkana-keys`
+  as `ci.yml`, and move the `ios-ci.yml` pins to `@3`. `ci.yml` needs no edit.
+
 ## [2.2.0] 2026-10-08
 
 ### Added

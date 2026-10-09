@@ -15,7 +15,7 @@
 #   refreshed  ota-refresh's "Refreshed staging install link"
 #   notice     ota-refresh's notices: a missing build, or an expired one being
 #              rebuilt
-#   command    a `/refresh-staging` comment, from anyone
+#   command    a `/refresh-staging` or `/staging-build` comment, from anyone
 #   media      ios-ci's "UI screenshots" of the PR's UI tests
 #
 # Needs GH_TOKEN with pull-requests: write, and GITHUB_REPOSITORY.
@@ -44,7 +44,7 @@ collect() {
          elif .author.login == "github-actions" and (.body | startswith("Refreshed staging install link")) then "refreshed"
          elif .author.login == "github-actions" and (.body | startswith("The staging build for") or startswith("No staging build was found")) then "notice"
          elif .author.login == "github-actions" and (.body | startswith("UI screenshots")) then "media"
-         elif .body | startswith("/refresh-staging") then "command"
+         elif .body | startswith("/refresh-staging") or startswith("/staging-build") then "command"
          else empty end) as $kind
       | {id, isMinimized, createdAt, kind: $kind}' \
     > "$file" || {
