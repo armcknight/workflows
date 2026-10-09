@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [3.0.0] 2026-10-08
+
 ### Changed
 
 - **ios-ci**: a staging build is on demand. Under `pull_request` the workflow
