@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [4.0.0] 2026-10-12
+
 ### Changed
 
 - **ios-ci**, **ota-refresh**: the command for a new staging build is
