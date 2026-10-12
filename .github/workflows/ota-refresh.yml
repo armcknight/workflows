@@ -1,8 +1,10 @@
 name: OTA refresh (reusable)
 
 # Re-sign a PR's staging OTA install link without rebuilding. The caller wires
-# the trigger (issue_comment '/refresh-staging' and/or workflow_dispatch) and
-# passes the PR number.
+# the trigger (issue_comment and/or workflow_dispatch) and passes the PR number.
+# The command text is checked here, not in the caller: under `issue_comment`,
+# the job is skipped, with no runner, unless the comment is `/refresh-staging`
+# on a PR.
 #
 # The staging bucket deletes builds after `retention-days`. When the PR's build
 # is gone for that reason and the caller sets `rebuild-expired`, this workflow
@@ -13,10 +15,8 @@ name: OTA refresh (reusable)
 # Caller requirements: repo vars AWS_ROLE_ARN/AWS_REGION/S3_BUCKET;
 # permissions: pull-requests: write, id-token: write.
 #
-# The caller must also gate its `issue_comment` trigger on the commenter's
-# author_association (see README), because a refresh mints a presigned install
-# link. This workflow re-checks the association itself, so a caller that forgets
-# the gate fails closed instead of serving links to any commenter.
+# A refresh mints a presigned install link, so the job checks the commenter's
+# author_association before it does anything else.
 
 on:
   workflow_call:
@@ -50,6 +50,10 @@ on:
 
 jobs:
   refresh:
+    if: >
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/refresh-staging'))
     runs-on: macos-15
     timeout-minutes: 10
     permissions:
@@ -61,10 +65,8 @@ jobs:
       LINK_TTL_SECONDS: "43200"
 
     steps:
-    # Defense in depth: the caller is told to gate the `issue_comment` trigger on
-    # the commenter, but enforce it here too, because this job assumes the AWS
-    # role and mints a presigned link to the build. A caller that forgets the
-    # gate must not become a way for any commenter to get an install link.
+    # This job assumes the AWS role and mints a presigned link to the build, so
+    # a commenter who cannot write to the repo must not get an install link.
     - name: Check that the commenter can write to the repo
       if: github.event_name == 'issue_comment'
       env:

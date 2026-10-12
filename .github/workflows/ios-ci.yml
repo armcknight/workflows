@@ -24,6 +24,11 @@ name: iOS CI (reusable)
 # refresh workflow's rebuild of an expired staging build), pass `pr-number`. The
 # Authorize job then checks the request, and the jobs check out that PR's head
 # instead of the triggering ref.
+#
+# The command text is checked here, not in the caller: the caller runs this
+# workflow on every `issue_comment`, and every job is skipped, with no runner,
+# unless the comment is `/build-staging` on a PR (or `/refresh-staging`, when
+# the caller sets `rebuild`).
 
 on:
   workflow_call:
@@ -46,6 +51,11 @@ on:
         required: false
         type: string
         default: ""
+      rebuild:
+        description: "Set true only in the refresh caller's job that runs on ota-refresh's `rebuild` output. A `/refresh-staging` comment then starts a staging build, in place of `/build-staging`."
+        required: false
+        type: boolean
+        default: false
       ui-screenshots-scheme:
         description: "Scheme that runs the UI tests. Setting it turns on the ui-screenshots job, which runs only under `pull_request`."
         required: false
@@ -75,12 +85,18 @@ env:
 
 jobs:
   # A staging build runs the PR's code with the caller's secrets and mints an
-  # install link, so check the request before any job checks the code out. The
-  # caller is told to gate its `issue_comment` trigger too; this check makes a
-  # caller that forgets fail closed.
+  # install link, so check the request before any job checks the code out.
+  #
+  # The `if:` skips every other comment before a runner starts. A skipped
+  # Authorize skips Test and Stage too.
   authorize:
     name: Authorize
-    if: github.event_name != 'pull_request'
+    if: >
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'issue_comment' ||
+       (github.event.issue.pull_request &&
+        (startsWith(github.event.comment.body, '/build-staging') ||
+         (inputs.rebuild && startsWith(github.event.comment.body, '/refresh-staging')))))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -119,9 +135,10 @@ jobs:
   test:
     name: Test
     # Under `pull_request`, Authorize is skipped. Otherwise the PR's code runs
-    # only after Authorize passes.
+    # only after Authorize passes: a skipped Authorize (any comment that is not
+    # a staging command) skips this job too.
     needs: authorize
-    if: ${{ !cancelled() && inputs.run-tests && needs.authorize.result != 'failure' }}
+    if: ${{ !cancelled() && inputs.run-tests && (github.event_name == 'pull_request' || needs.authorize.result == 'success') }}
     runs-on: macos-26
     timeout-minutes: 10
     permissions:

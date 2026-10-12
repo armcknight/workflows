@@ -28,13 +28,23 @@ edit a caller applies.
 - **ios-ci**, **ota-refresh**: the command for a new staging build is
   `/build-staging`, not `/staging-build`, so it agrees with `/refresh-staging`.
   The comments these workflows post name the new command.
+- **ios-ci**, **ota-refresh**: the workflows check the command text
+  themselves, so a caller no longer gates its `issue_comment` trigger. A
+  command rename is then a change in this repo only. Each check is a job-level
+  `if:`, so any other comment skips the jobs before a runner starts. The
+  commenter's `author_association` is checked in the jobs, as before.
+- **ios-ci**: a new optional `rebuild` input. The refresh caller's `rebuild` job
+  sets it, so that a `/refresh-staging` comment can start the build of an
+  expired staging build.
 - **stale-comments**: `/build-staging` comments are hidden as answered. Old
   `/staging-build` comments are hidden too.
 
   ### Caller migration
-  In `.github/workflows/staging-build.yml`, change
-  `startsWith(github.event.comment.body, '/staging-build')` to
-  `startsWith(github.event.comment.body, '/build-staging')`.
+  In `.github/workflows/staging-build.yml`, delete the `if:` of the `stage`
+  job. In `.github/workflows/refresh-staging-link.yml`, delete the `if:` of the
+  `refresh` job, and if it has a `rebuild` job, add `rebuild: true` to that
+  job's `with:`. Then move the `ios-ci.yml` and `ota-refresh.yml` pins to `@4`.
+  See the README's caller examples.
 
 ## [3.1.0] 2026-10-11
 

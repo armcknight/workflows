@@ -55,6 +55,7 @@ S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run
 | `arkana-keys` | yes | Space-separated arkana key **names**. Values are resolved from the caller's secrets by name, so no secret values pass through `with:`. |
 | `run-tests` | no (`true`) | Run the fastlane `test` lane first. Set `false` for apps with no unit-test scheme. |
 | `pr-number` | no (none) | PR to stage when the trigger is not `pull_request`: the `/build-staging` caller or the rebuild job in the refresh caller below. Setting it is what makes a staging build. Leave it out under `pull_request`. |
+| `rebuild` | no (`false`) | Set `true` only in the refresh caller's `rebuild` job. A `/refresh-staging` comment then starts the build, in place of `/build-staging`. |
 | `ui-screenshots-scheme` | no (none) | Scheme that runs the UI tests. Setting it turns on the `ui-screenshots` job. |
 | `ui-screenshots-path` | with the scheme | Directory of the UI test sources. Each `XCTestCase` class in a Swift file the PR adds or changes there is run with `-only-testing`, along with any test the PR description names (below). |
 | `ui-screenshots-target` | no (the scheme) | UI test target name, for `-only-testing`. |
@@ -82,7 +83,10 @@ must grant `contents: write`; the other jobs still ask for read only. A failed
 UI test still posts its screenshots, then fails the job.
 
 A staging build is on demand: under `pull_request` there is no `stage` job, so a
-push costs only the tests. When the trigger is not `pull_request`, the
+push costs only the tests. Under `issue_comment`, every job is skipped, with no
+runner, unless the comment is `/build-staging` on a PR (or `/refresh-staging`
+with `rebuild` set). The caller does not check the command text. When the
+trigger is not `pull_request`, the
 `authorize` job runs before any job checks out the PR's code. It refuses a
 commenter who cannot write to the repo, a missing `pr-number`, and a PR that is
 closed or from a fork, and reacts 👀 to the comment. Then `test` runs (unless
@@ -91,7 +95,9 @@ closed or from a fork, and reacts 👀 to the comment. Then `test` runs (unless
 `ota-refresh.yml`: `pr-number` (required), `run-id` (optional — defaults to the
 PR's newest build), `comment-id` (optional — the comment to react to),
 `rebuild-expired` (optional, `false`) and `retention-days` (optional, `30` — the
-age at which the staging bucket's lifecycle rule deletes a build).
+age at which the staging bucket's lifecycle rule deletes a build). Under
+`issue_comment`, the job is skipped, with no runner, unless the comment is
+`/refresh-staging` on a PR.
 
 When the PR has no build to re-sign, the workflow comments the reason on the PR
 and fails. The one exception: the newest "Staging build ready" comment is older
@@ -395,13 +401,9 @@ permissions:
   pull-requests: write
   id-token: write
 jobs:
+  # No `if:` here: ios-ci.yml skips every job unless the comment is
+  # `/build-staging` on a PR, and checks that the commenter can write to the repo.
   stage:
-    # Gate on the commenter, not only on the command text: the build runs the
-    # PR's code with the repo's secrets and mints a presigned install link.
-    if: >
-      github.event.issue.pull_request &&
-      startsWith(github.event.comment.body, '/build-staging') &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     uses: armcknight/workflows/.github/workflows/ios-ci.yml@1
     with:
       # The same ios-ci inputs as ci.yml.
@@ -428,15 +430,10 @@ permissions:
   pull-requests: write
   id-token: write
 jobs:
+  # No `if:` here: ota-refresh.yml skips its job unless the comment is
+  # `/refresh-staging` on a PR, and checks that the commenter can write to the
+  # repo. `workflow_dispatch` is already write-gated by GitHub.
   refresh:
-    # Gate on the commenter, not only on the command text: the job mints a
-    # presigned install link for the build, so only persons who can write to the
-    # repo may trigger it. `workflow_dispatch` is already write-gated by GitHub.
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.issue.pull_request &&
-       startsWith(github.event.comment.body, '/refresh-staging') &&
-       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     uses: armcknight/workflows/.github/workflows/ota-refresh.yml@1
     with:
       pr-number: ${{ github.event.issue.number || inputs.pr_number }}
@@ -456,6 +453,8 @@ jobs:
       arkana-keys: SentryDSN FeedbackEmail
       # The PR's code already ran its tests when it was first built.
       run-tests: false
+      # Lets the `/refresh-staging` comment start the build.
+      rebuild: true
       pr-number: ${{ github.event.issue.number || inputs.pr_number }}
     secrets: inherit
 ```
@@ -511,11 +510,11 @@ jobs:
   be "Accessible from repositories owned by the user account.")
 - Installs are **ad-hoc**: a tester's device UDID must be in the `match adhoc`
   provisioning profile.
-- `ota-refresh.yml` and the `authorize` job of `ios-ci.yml` re-check
-  `author_association` themselves on `issue_comment` events, so a caller that
-  omits the `if:` gates above fails closed instead of giving any commenter an
-  install link. Keep the gates in the caller anyway — they stop the run before
-  it starts a runner.
+- `ota-refresh.yml` and `ios-ci.yml` check the command text and the
+  commenter's `author_association` themselves on `issue_comment` events, so the
+  callers above have no `if:` gate on the comment. The command check is a
+  job-level `if:`, so any other comment skips the jobs before a runner starts.
+  GitHub still lists a run, with skipped jobs, for each PR comment.
 - `issue_comment` and `workflow_run` triggers always run the **default-branch**
   copy of the *caller's* workflow, so `/build-staging` and `/refresh-staging`
   only work once the caller's workflows are on its default branch.
