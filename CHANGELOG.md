@@ -23,6 +23,16 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **swift-package-ci**: a new optional `cli-examples-product` input turns on a
+  `cli-examples` job under `pull_request`. It runs the commands that a
+  `<!-- cli-examples: … -->` marker in the PR description names, on the base
+  branch and on the PR, and comments a diff of their output on the PR. The
+  caller must grant `pull-requests: write` for the comment.
+- **stale-comments**: a new `cli` kind for the `cli-examples` comment, so only
+  the newest one stays visible.
+
 ## [3.0.0] 2026-10-08
 
 ### Changed

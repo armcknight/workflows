@@ -34,7 +34,7 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` and `/staging-build` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
-| `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package. |
+| `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package, and the optional `cli-examples` job beside them, which runs the commands the PR description names on the base branch and on the PR and comments the change in their output. |
 | `swiftpm-cask-release.yml` | `push` of a version tag | Build a SwiftPM CLI, optionally sign + notarize it, attach the tarball to a release on the tap repo, bump the cask. |
 | `claude-plugin-ci.yml` | `pull_request` | Validate a Claude Code plugin manifest and its marketplace manifest. |
 | `claude-plugin-release.yml` | `push` of a version tag | Validate both manifests, refuse a tag that disagrees with the plugin version, create the GitHub release. |
@@ -122,8 +122,44 @@ PR, which posts a new install link.
 
 Outputs: `version`, `asset`, `sha256`.
 
-`swift-package-ci.yml`: `runs-on` (optional, `macos-15`), `build-args` and
-`test-args` (optional — appended to `swift build` and `swift test`).
+`swift-package-ci.yml`:
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `runs-on` | no (`macos-15`) | Runner label. |
+| `build-args` | no (none) | Appended to `swift build`. |
+| `test-args` | no (none) | Appended to `swift test`. |
+| `submodules` | no (none) | Passed to `actions/checkout`. |
+| `cli-examples-product` | no (none) | Executable product that the PR's example commands run. Setting it turns on the `cli-examples` job. |
+
+A PR shows its CLI change with example commands in a hidden marker in its
+description, one command on each line:
+
+```html
+<!-- cli-examples:
+mytool list
+mytool list --json
+$ mytool sync --dry-run "My Folder"
+-->
+```
+
+The `cli-examples` job runs only under `pull_request`. It builds the product on
+the PR and on the base branch, runs each command on both (in the root of each
+checkout, with no stdin, `NO_COLOR=1`, `TERM=dumb`, and a 60-second limit), and
+comments on the PR: a diff of the two outputs and the PR's output for each
+command, with the exit status when it is not 0 or when it changes. It hides its
+earlier comment. When the base branch does not build the product (a new tool,
+for example), the comment shows only the PR's output.
+
+The commands are not given to a shell. Each line is split into words as a
+shell would split it, with quotes, and the first word must be the product name.
+Pipes, redirections, variables and globs do not work. A line that does not
+start with the product name is skipped with a warning. At most 20 commands run.
+
+The job reads the description of the event that started the run, so an edit to
+the description takes effect on the next push. To comment, the caller must
+grant `pull-requests: write`. Without it, or on a PR from a fork, the job puts
+the output in its summary and gives a warning.
 
 `swiftpm-cask-release.yml`:
 

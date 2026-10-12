@@ -8,6 +8,11 @@ name: Swift package CI (reusable)
 #       uses: armcknight/workflows/.github/workflows/swift-package-ci.yml@main
 #
 # Override `runs-on` or pass extra flags if a repo needs them.
+#
+# Optional: set `cli-examples-product` to run the commands a PR description
+# names in a `<!-- cli-examples: … -->` marker, on the base branch and on the
+# PR, and comment the change in their output on the PR. The caller must grant
+# `pull-requests: write` for the comment.
 
 on:
   workflow_call:
@@ -32,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      cli-examples-product:
+        description: "Executable product the `<!-- cli-examples: … -->` commands in a PR description run. Setting it turns on the cli-examples job, which runs only under `pull_request`."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build-and-test:
@@ -47,3 +57,95 @@ jobs:
 
       - name: Test
         run: swift test ${{ inputs.test-args }}
+
+  cli-examples:
+    name: CLI examples
+    # Runs beside build-and-test: it only reports, so nothing waits on it.
+    if: inputs.cli-examples-product != '' && github.event_name == 'pull_request'
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: ${{ inputs.submodules }}
+          # The default merge commit and its first parent, the base branch.
+          fetch-depth: 2
+
+      # Pinned to main: a reusable workflow cannot refer to an action at its own
+      # ref.
+      - name: Set up cli-examples
+        uses: armcknight/workflows/.github/actions/cli-examples@main
+
+      - name: Set up stale-comments
+        uses: armcknight/workflows/.github/actions/stale-comments@main
+
+      - name: Read the commands from the PR description
+        id: commands
+        env:
+          PRODUCT: ${{ inputs.cli-examples-product }}
+          # Read for its `<!-- cli-examples: … -->` marker. An env var, never
+          # inlined into the script: anyone who can edit the PR writes it.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          cli-examples commands "$PRODUCT" > "$RUNNER_TEMP/commands.jsonl"
+          COUNT=$(wc -l < "$RUNNER_TEMP/commands.jsonl" | tr -d ' ')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "The PR description names no $PRODUCT commands in a cli-examples marker; nothing to run."
+          fi
+
+      - name: Build and run on this PR
+        if: steps.commands.outputs.count != '0'
+        env:
+          PRODUCT: ${{ inputs.cli-examples-product }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
+          swift build --product "$PRODUCT" $BUILD_ARGS
+          # shellcheck disable=SC2086
+          BIN="$(swift build --show-bin-path $BUILD_ARGS)/$PRODUCT"
+          cli-examples run "$BIN" "$PWD" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/head"
+
+      - name: Build and run on the base branch
+        id: base
+        if: steps.commands.outputs.count != '0'
+        env:
+          PRODUCT: ${{ inputs.cli-examples-product }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+          SUBMODULES: ${{ inputs.submodules }}
+        run: |
+          SRC="$RUNNER_TEMP/base-src"
+          git worktree add --detach "$SRC" HEAD^1
+          if [ -n "$SUBMODULES" ]; then
+            git -C "$SRC" submodule update --init --recursive
+          fi
+          cd "$SRC"
+          # A new product, or a base that does not build, is not a failure:
+          # the comment then shows only this PR's output.
+          # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
+          if swift build --product "$PRODUCT" $BUILD_ARGS; then
+            # shellcheck disable=SC2086
+            BIN="$(swift build --show-bin-path $BUILD_ARGS)/$PRODUCT"
+            cli-examples run "$BIN" "$SRC" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/base"
+            echo "out=$RUNNER_TEMP/base" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::The base branch did not build $PRODUCT; the comment shows only this PR's output."
+          fi
+
+      - name: Comment the output on the PR
+        if: steps.commands.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_OUT: ${{ steps.base.outputs.out }}
+        run: |
+          cli-examples report "$RUNNER_TEMP/commands.jsonl" "$BASE_OUT" "$RUNNER_TEMP/head" "$SHA" "$RUNNER_TEMP/cli-examples.md"
+          cat "$RUNNER_TEMP/cli-examples.md" >> "$GITHUB_STEP_SUMMARY"
+          # Only the newest output stays visible.
+          stale-comments collect "$PR_NUMBER" "$RUNNER_TEMP/stale-comments.jsonl"
+          if gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/cli-examples.md"; then
+            stale-comments hide "$RUNNER_TEMP/stale-comments.jsonl" cli
+          else
+            echo "::warning::Could not comment on PR #$PR_NUMBER. The caller must grant pull-requests: write, and a PR from a fork gets a read-only token. The output is in the job summary."
+          fi

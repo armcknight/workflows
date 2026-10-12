@@ -1,0 +1,13 @@
+name: CLI examples
+description: >
+  Put the `cli-examples` script on PATH, so later steps can read the commands a
+  PR description names, run them on the base branch and on the PR, and write a
+  PR comment that shows the change in their output. Used by
+  swift-package-ci.yml's cli-examples job.
+
+runs:
+  using: composite
+  steps:
+  - name: Add cli-examples to PATH
+    shell: bash
+    run: echo "$GITHUB_ACTION_PATH" >> "$GITHUB_PATH"
