@@ -2,7 +2,7 @@ name: iOS CI (reusable)
 
 # Reusable PR pipeline for armcknight iOS apps. Under `pull_request` it runs the
 # tests (and the optional UI screenshots) only. A staging build is on demand: the
-# caller runs this workflow again from a `/staging-build` PR comment with
+# caller runs this workflow again from a `/build-staging` PR comment with
 # `pr-number` set, and then, only if the tests pass, it builds an ad-hoc staging
 # IPA and publishes a presigned OTA install link (see README).
 #
@@ -20,7 +20,7 @@ name: iOS CI (reusable)
 # PR. That job also needs the caller to grant contents: write, because it pushes
 # the images to an orphan `ui-screenshots` branch.
 #
-# Under any event other than `pull_request` (a `/staging-build` comment, or the
+# Under any event other than `pull_request` (a `/build-staging` comment, or the
 # refresh workflow's rebuild of an expired staging build), pass `pr-number`. The
 # Authorize job then checks the request, and the jobs check out that PR's head
 # instead of the triggering ref.
@@ -42,7 +42,7 @@ on:
         type: boolean
         default: true
       pr-number:
-        description: "PR to stage when the trigger is not `pull_request` (a `/staging-build` comment, or a rebuild from the refresh workflow). Setting it is what makes a staging build. Leave empty under `pull_request`."
+        description: "PR to stage when the trigger is not `pull_request` (a `/build-staging` comment, or a rebuild from the refresh workflow). Setting it is what makes a staging build. Leave empty under `pull_request`."
         required: false
         type: string
         default: ""
@@ -323,7 +323,7 @@ jobs:
         EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
         RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
 
-        printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed. Comment `/staging-build` for a new build of the newest commit._\n' \
+        printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed. Comment `/build-staging` for a new build of the newest commit._\n' \
           "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
         BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
         if [ -n "$BUILD_EXPIRES" ]; then
@@ -332,7 +332,7 @@ jobs:
         fi
 
         # A new build makes the PR's earlier install links, refresh notices and
-        # `/refresh-staging` and `/staging-build` commands stale (not its UI
+        # `/refresh-staging` and `/build-staging` commands stale (not its UI
         # screenshots, which the ui-screenshots job replaces itself). Read them
         # before posting, so the new comment is never among them.
         stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl

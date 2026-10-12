@@ -23,6 +23,19 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Changed
+
+- **ios-ci**, **ota-refresh**: the command for a new staging build is
+  `/build-staging`, not `/staging-build`, so it agrees with `/refresh-staging`.
+  The comments these workflows post name the new command.
+- **stale-comments**: `/build-staging` comments are hidden as answered. Old
+  `/staging-build` comments are hidden too.
+
+  ### Caller migration
+  In `.github/workflows/staging-build.yml`, change
+  `startsWith(github.event.comment.body, '/staging-build')` to
+  `startsWith(github.event.comment.body, '/build-staging')`.
+
 ## [3.1.0] 2026-10-11
 
 ### Added

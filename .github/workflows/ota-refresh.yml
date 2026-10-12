@@ -129,7 +129,7 @@ jobs:
         # Explain on the PR why there is no link, then fail the check.
         fail_missing_build() {
           echo "::error::$1"
-          printf '%s\n\nStaging builds are probably deleted %s days after they are made, by the lifecycle rule on the staging bucket. A refresh only re-signs a build that exists, so it cannot make a new one.\n\nTo get a new staging build, comment `/staging-build` on this PR. Do not close and reopen the PR: closing it deletes all of its staging builds.\n' \
+          printf '%s\n\nStaging builds are probably deleted %s days after they are made, by the lifecycle rule on the staging bucket. A refresh only re-signs a build that exists, so it cannot make a new one.\n\nTo get a new staging build, comment `/build-staging` on this PR. Do not close and reopen the PR: closing it deletes all of its staging builds.\n' \
             "$1" "$RETENTION_DAYS" > /tmp/pr-comment.md
           gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md || true
           # The commands are answered, and this notice replaces earlier ones.
