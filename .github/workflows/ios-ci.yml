@@ -231,7 +231,8 @@ jobs:
 
     steps:
     # Outside `pull_request` there is no head_ref, so look up the requested PR's
-    # head branch.
+    # head branch. An empty ref makes the checkout below fall back to the default
+    # branch and stage the wrong code, so fail instead of passing one on.
     - name: Resolve PR head branch
       id: pr
       env:
@@ -239,7 +240,17 @@ jobs:
         GH_REPO: ${{ github.repository }}
         PR_NUMBER: ${{ inputs.pr-number }}
       run: |
-        echo "head-ref=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)" >> "$GITHUB_OUTPUT"
+        HEAD_REF=""
+        for attempt in 1 2 3; do
+          HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName) && [ -n "$HEAD_REF" ] && break
+          echo "::warning::Attempt $attempt to look up the head branch of PR #$PR_NUMBER failed." >&2
+          sleep $((attempt * 5))
+        done
+        if [ -z "$HEAD_REF" ]; then
+          echo "::error::Could not look up the head branch of PR #$PR_NUMBER. Refusing to stage the default branch." >&2
+          exit 1
+        fi
+        echo "head-ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
 
     - name: Checkout code
       uses: actions/checkout@v4

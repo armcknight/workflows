@@ -46,6 +46,13 @@ edit a caller applies.
   job's `with:`. Then move the `ios-ci.yml` and `ota-refresh.yml` pins to `@4`.
   See the README's caller examples.
 
+### Fixed
+
+- **ios-ci**: when the Stage job could not look up the PR's head branch, for
+  example because of a network error, it checked out and staged the default
+  branch, and the install link named the default branch's commit. It now tries
+  the lookup three times, then fails.
+
 ## [3.1.0] 2026-10-11
 
 ### Added
