@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [3.1.0] 2026-10-11
+
 ### Added
 
 - **swift-package-ci**: a new optional `cli-examples-product` input turns on a
