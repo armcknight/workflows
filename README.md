@@ -186,8 +186,11 @@ conditionally required, so the workflow names the missing one at run time rather
 than shipping an unsigned build.
 
 A final tag (`1.2.3`) routes to `Casks/<cask-name>.rb`; a release candidate
-(`1.2.3-rc.1`) routes to `Casks/<cask-name>-rc.rb`, so an RC never disturbs the
-stable channel. Signing is optional here, unlike `macos-cask-release.yml` where
+(`1.2.3-RC1`, as `prepare-release rc` names it) routes to
+`Casks/<cask-name>-rc.rb`, so an RC never disturbs the stable channel. The
+cask's `binary` lines are rewritten from `binaries` on every release, so a new
+executable needs no hand edit in the tap; the cask must already have at least
+one `binary` line to mark where they go. Signing is optional here, unlike `macos-cask-release.yml` where
 it is mandatory: Homebrew quarantines every cask download, but a `binary`
 artifact run from a shell does not face the Gatekeeper launch check a `.app`
 does. There is no stapling step — `stapler` writes a ticket into a bundle, a

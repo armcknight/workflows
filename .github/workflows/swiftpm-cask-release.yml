@@ -10,10 +10,11 @@ name: SwiftPM cask release (reusable)
 #   4. tars them and attaches the tarball to a release on the *tap* repo — so the
 #      cask URL is downloadable with no credentials, whether or not the source
 #      repo is public,
-#   5. bumps `version` + `sha256` in `Casks/<cask-name>.rb` in the tap and pushes.
+#   5. bumps `version` + `sha256` in `Casks/<cask-name>.rb` in the tap, rewrites
+#      its `binary` lines from the `binaries` input, and pushes.
 #
 # A final tag (1.2.3) routes to `Casks/<cask-name>.rb`; a release candidate
-# (1.2.3-rc.1) routes to `Casks/<cask-name>-rc.rb`, so an RC never disturbs the
+# (1.2.3-RC1, as `prepare-release rc` names it) routes to `Casks/<cask-name>-rc.rb`, so an RC never disturbs the
 # stable channel.
 #
 # Caller requirements:
@@ -26,8 +27,9 @@ name: SwiftPM cask release (reusable)
 #     is read from the fastlane match repo (readonly, same as
 #     macos-cask-release.yml). The workflow names a missing one rather than
 #     shipping an unsigned build.
-#   - `Casks/<cask-name>.rb` already committed to the tap. This workflow rewrites
-#     the version and sha256 lines; it never creates the file.
+#   - `Casks/<cask-name>.rb` already committed to the tap, with at least one
+#     `binary` line. This workflow rewrites the version, sha256 and binary lines;
+#     it never creates the file.
 #
 # Signing is optional here, unlike macos-cask-release.yml where it is mandatory.
 # Homebrew quarantines every cask download, but a `binary` artifact run from a
@@ -150,7 +152,7 @@ jobs:
             echo "::error file=$VERSION_FILE::version-regex matched nothing. It needs exactly one capture group around the version."
             exit 1
           fi
-          # An RC tag like 1.2.3-rc.1 should match the source's base 1.2.3.
+          # An RC tag like 1.2.3-RC1 should match the source's base 1.2.3.
           BASE="${TAG%%-*}"
           if [ "$BASE" != "$SRC_VERSION" ]; then
             echo "::error file=$VERSION_FILE::Source version ($SRC_VERSION) does not match the base of tag ($TAG). Bump the source, or the release ships a binary that reports the wrong version."
@@ -346,6 +348,7 @@ jobs:
         VERSION: ${{ steps.ver.outputs.version }}
         SHA256: ${{ steps.pkg.outputs.sha256 }}
         CASK_PATH: ${{ steps.ver.outputs.cask_path }}
+        BINARIES: ${{ inputs.binaries }}
       run: |
         set -euo pipefail
         git clone "https://github.com/${TAP_REPO}.git" tap
@@ -360,6 +363,19 @@ jobs:
         fi
         sed -i '' -E "s/^  version \".*\"$/  version \"${VERSION}\"/" "$CASK_PATH"
         sed -i '' -E "s/^  sha256 \".*\"$/  sha256 \"${SHA256}\"/" "$CASK_PATH"
+        # The archive holds exactly `binaries`, so the cask must link exactly
+        # those. Replace the existing binary lines in place, keeping whatever
+        # stanzas come before and after them.
+        if ! grep -q '^  binary "' "$CASK_PATH"; then
+          echo "::error::$CASK_PATH has no binary lines, so there is no place to write them."
+          exit 1
+        fi
+        # Unquoted on purpose, as in the build check: one line per binary.
+        # shellcheck disable=SC2086
+        NEW_BINARIES="$(printf '  binary "%s"\n' $BINARIES)"
+        export NEW_BINARIES
+        awk '/^  binary "/ { if (!done) { print ENVIRON["NEW_BINARIES"]; done = 1 }; next } { print }' "$CASK_PATH" > "$CASK_PATH.new"
+        mv "$CASK_PATH.new" "$CASK_PATH"
         if git diff --quiet; then
           echo "no cask changes to commit"
           exit 0

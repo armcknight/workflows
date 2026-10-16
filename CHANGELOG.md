@@ -23,6 +23,14 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **swiftpm-cask-release**: rewrites the cask's `binary` lines from the
+  `binaries` input on every release, so the cask always links what the archive
+  holds. Before, only `version` and `sha256` moved, and a new executable stayed
+  unlinked until someone edited the tap by hand. The cask must already have at
+  least one `binary` line; a cask with none fails the release with an error.
+
 ## [4.0.0] 2026-10-12
 
 ### Changed

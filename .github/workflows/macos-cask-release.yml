@@ -42,7 +42,7 @@ name: macOS cask release (reusable)
 #   - `Casks/<cask-name>.rb` already present in the tap repo; this workflow
 #     rewrites its `version` and `sha256` lines, it does not create the file.
 #
-# Prerelease tags (`X.Y.Z-rc.N`) are accepted but get no special treatment: they
+# Prerelease tags (`X.Y.Z-RCN`) are accepted but get no special treatment: they
 # bump whatever `cask-name` the caller passes. For an RC channel, keep the tag
 # filters apart in the caller and pass `cask-name: <name>-rc` from the RC job.
 
