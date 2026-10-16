@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [4.1.0] 2026-10-16
+
 ### Added
 
 - **swiftpm-cask-release**: rewrites the cask's `binary` lines from the
