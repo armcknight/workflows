@@ -278,6 +278,8 @@ the alias never moves backwards.
 `make lint` runs the same actionlint check `ci.yml` runs, so a lint failure shows
 up before the PR.
 
+`make` (or `make help`) lists every target with a one-line description.
+
 ## Caller requirements — OTA workflows
 
 **Repo variables** (read from the caller automatically — `vars` propagate into
