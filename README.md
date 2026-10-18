@@ -212,6 +212,28 @@ app run one at a time, and a started deploy is never cancelled. As
 not the tip of the default branch: a run started from another branch, or a
 rerun of an old push.
 
+Both workflows only check out and call the scripts in [`scripts/`](scripts),
+which do the work. The scripts take their inputs as environment variables, have
+no dependency on GitHub Actions, and each one documents its variables at the
+top, so you can run them locally or from a different CI provider. The workflows
+check them out at the commit of the workflow (`job.workflow_sha`), so a caller
+that pins `@4` also gets the `@4` scripts. To deploy by hand, from the server's
+checkout of the default branch (in its `working-directory`):
+
+```sh
+export APP=my-server
+path/to/workflows/scripts/fly/check-tip.sh
+path/to/workflows/scripts/fly/deploy.sh
+path/to/workflows/scripts/fly/wait-for-health.sh
+```
+
+To build and test on Linux as `vapor-ci.yml` does:
+
+```sh
+docker run --rm -v "$PWD":/src -v path/to/workflows/scripts:/scripts -w /src \
+  swift:6.0-noble sh -c '/scripts/vapor/build.sh && /scripts/vapor/test.sh'
+```
+
 `swiftpm-cask-release.yml`:
 
 | Input | Required | Description |

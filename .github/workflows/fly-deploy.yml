@@ -38,6 +38,15 @@ name: Fly deploy (reusable)
 # of the default branch, such as a run started from another branch, or a rerun
 # of an old push: `fly deploy` would put code on the server that is not on the
 # default branch.
+#
+# The work is done by scripts/fly/ in this repository, which run the same
+# outside GitHub Actions. This workflow only checks them out and calls them.
+# To deploy locally, from the server's checkout of the default branch:
+#
+#   export APP=my-server
+#   path/to/scripts/fly/check-tip.sh
+#   path/to/scripts/fly/deploy.sh
+#   path/to/scripts/fly/wait-for-health.sh
 
 on:
   workflow_call:
@@ -94,14 +103,25 @@ jobs:
     name: Check the inputs
     runs-on: ubuntu-latest
     steps:
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
       - name: Check deploy-on
         env:
           DEPLOY_ON: ${{ inputs.deploy-on }}
         run: |
-          case "$DEPLOY_ON" in
-            manual|merge) ;;
-            *) echo "::error::deploy-on is '$DEPLOY_ON'; it must be manual or merge."; exit 1 ;;
-          esac
+          "$SCRIPTS/fly/check-deploy-on.sh"
 
   deploy:
     name: Deploy ${{ inputs.app }}
@@ -123,24 +143,26 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        working-directory: .
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
       - name: Refuse a commit that is not the tip of the default branch
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          set -euo pipefail
-          git fetch --depth=1 origin "$DEFAULT_BRANCH"
-          head=$(git rev-parse HEAD)
-          tip=$(git rev-parse FETCH_HEAD)
-          if [ "$head" != "$tip" ]; then
-            echo "::error::This run is at $head, but $DEFAULT_BRANCH is at $tip. Deploy only the tip of $DEFAULT_BRANCH: start the workflow from $DEFAULT_BRANCH again."
-            exit 1
-          fi
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "::error::The checkout has changes."
-            git status --short
-            exit 1
-          fi
-          echo "SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+          "$SCRIPTS/fly/check-tip.sh"
 
       - uses: superfly/flyctl-actions/setup-flyctl@1.5
 
@@ -149,7 +171,8 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           APP: ${{ inputs.app }}
           CONFIG: ${{ inputs.config }}
-        run: flyctl deploy --remote-only --app "$APP" --config "$CONFIG" --build-arg GIT_SHA="$SHA"
+        run: |
+          "$SCRIPTS/fly/deploy.sh"
 
       - name: Wait for the health check
         env:
@@ -159,22 +182,4 @@ jobs:
           REQUIRE_SHA: ${{ inputs.require-sha }}
           TIMEOUT: ${{ inputs.health-timeout-seconds }}
         run: |
-          set -uo pipefail
-          check="${URL:-https://$APP.fly.dev}$HEALTH_PATH"
-          deadline=$(( $(date +%s) + TIMEOUT ))
-          while [ "$(date +%s)" -lt "$deadline" ]; do
-            if body=$(curl -fsS --max-time 10 "$check" 2>/dev/null); then
-              if [ "$REQUIRE_SHA" != "true" ] || printf '%s' "$body" | grep -q "$SHA"; then
-                echo "Deployed $SHA to $APP, and $check answers."
-                echo "Deployed \`$SHA\` to \`$APP\`; [$check]($check) answers." >> "$GITHUB_STEP_SUMMARY"
-                exit 0
-              fi
-            fi
-            sleep 5
-          done
-          if [ "$REQUIRE_SHA" = "true" ]; then
-            echo "::error::The deploy finished, but $check did not answer with $SHA in ${TIMEOUT}s. See flyctl logs --app $APP."
-          else
-            echo "::error::The deploy finished, but $check did not answer in ${TIMEOUT}s. See flyctl logs --app $APP."
-          fi
-          exit 1
+          "$SCRIPTS/fly/wait-for-health.sh"

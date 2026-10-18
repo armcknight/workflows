@@ -27,6 +27,14 @@ jobs:
       with:
         args: -color
 
+    # The scripts the reusable workflows check out and run are not in a `run:`
+    # block, so actionlint does not see them. Same image, same excludes.
+    - name: Lint scripts/
+      run: |
+        docker run --rm -v "$PWD":/repo -w /repo --entrypoint shellcheck \
+          rhysd/actionlint:1.7.7 -e SC2016 -e SC2129 -e SC2015 \
+          -x scripts/lib.sh scripts/*/*.sh
+
   changelog:
     name: Changelog entry
     # A push to main is the release commit or a merge, which already carries its
@@ -50,8 +58,9 @@ jobs:
 
         changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
 
-        if ! printf '%s\n' "$changed" | grep -q '^\.github/'; then
-          echo "No change under .github/; nothing to require."
+        # scripts/ is what the reusable workflows run, so it counts too.
+        if ! printf '%s\n' "$changed" | grep -qE '^(\.github|scripts)/'; then
+          echo "No change under .github/ or scripts/; nothing to require."
           exit 0
         fi
 
@@ -63,5 +72,5 @@ jobs:
         # Callers pin a tag and read the release notes to decide whether to move
         # it. A workflow change with no entry is invisible to them, and
         # prepare-release refuses to cut a release from an empty [Unreleased].
-        echo "::error file=CHANGELOG.md::This PR changes .github/ but not CHANGELOG.md. Add an entry under [Unreleased], or add the 'skip-changelog' label."
+        echo "::error file=CHANGELOG.md::This PR changes .github/ or scripts/ but not CHANGELOG.md. Add an entry under [Unreleased], or add the 'skip-changelog' label."
         exit 1

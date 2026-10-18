@@ -17,6 +17,9 @@ name: Vapor CI (reusable)
 # and the Docker build run there.
 #
 # Keep `swift-image` in step with the Dockerfile's `FROM swift:` lines.
+#
+# The work is done by scripts/vapor/ in this repository, which run the same
+# outside GitHub Actions. This workflow only checks them out and calls them.
 
 on:
   workflow_call:
@@ -82,6 +85,21 @@ jobs:
         with:
           submodules: ${{ inputs.submodules }}
 
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        working-directory: .
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
       - name: Cache the dependencies and the build
         uses: actions/cache@v4
         with:
@@ -94,39 +112,51 @@ jobs:
           PRODUCT: ${{ inputs.product }}
           BUILD_ARGS: ${{ inputs.build-args }}
         run: |
-          if [ -n "$PRODUCT" ]; then
-            # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-            swift build --product "$PRODUCT" $BUILD_ARGS
-          else
-            # shellcheck disable=SC2086
-            swift build $BUILD_ARGS
-          fi
+          "$SCRIPTS/vapor/build.sh"
 
       - name: Test
         if: inputs.run-tests
         env:
           TEST_ARGS: ${{ inputs.test-args }}
         run: |
-          # shellcheck disable=SC2086 # TEST_ARGS is the caller's extra flags.
-          swift test $TEST_ARGS
+          "$SCRIPTS/vapor/test.sh"
 
   docker:
     name: Build the Docker image
     if: inputs.docker-build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: ${{ inputs.submodules }}
 
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        working-directory: .
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
       - uses: docker/setup-buildx-action@v3
 
+      # Gives the build below the token for the GitHub Actions cache.
+      - uses: crazy-max/ghaction-github-runtime@v3
+
       # Not pushed: Fly's builder makes the image that is deployed.
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ inputs.working-directory }}
-          file: ${{ inputs.working-directory }}/${{ inputs.dockerfile }}
-          push: false
-          build-args: GIT_SHA=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build the image
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          DOCKER_BUILD_ARGS: --cache-from type=gha --cache-to type=gha,mode=max
+        run: |
+          "$SCRIPTS/vapor/docker-build.sh"
