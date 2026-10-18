@@ -28,6 +28,10 @@ name: Fly deploy (reusable)
 #       secrets:
 #         FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 #
+# Set `working-directory` when the server is not at the repository root, such as
+# `server` in a repository that also holds an app. `flyctl deploy` runs there,
+# so its `fly.toml` and its Docker build context are there.
+#
 # FLY_API_TOKEN is a deploy token for the one app: `fly tokens create deploy`.
 #
 # Like `make server deploy`, it refuses to deploy a commit that is not the tip
@@ -68,10 +72,15 @@ on:
         type: number
         default: 180
       config:
-        description: "The Fly configuration file, relative to the repository root."
+        description: "The Fly configuration file, relative to `working-directory`."
         required: false
         type: string
         default: "fly.toml"
+      working-directory:
+        description: "Directory of the server, relative to the repository root. `flyctl deploy` runs there."
+        required: false
+        type: string
+        default: "."
     secrets:
       FLY_API_TOKEN:
         description: "A deploy token for the app."
@@ -108,6 +117,9 @@ jobs:
     concurrency:
       group: fly-deploy-${{ inputs.app }}
       cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v5
 

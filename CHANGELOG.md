@@ -35,6 +35,13 @@ edit a caller applies.
   deploys only on `workflow_dispatch`; `merge` also deploys on each push to the
   default branch. It refuses a commit that is not the branch's tip. It needs the
   `FLY_API_TOKEN` secret, a deploy token for the app.
+- **ios-ci**, **vapor-ci**, **fly-deploy**: an optional `working-directory`
+  input, default `.`, for a repository that keeps each component in its own
+  directory, such as `ios/` and `server/`. Every step that runs in the
+  repository runs there, and paths such as the IPA, the test report, the
+  Dockerfile and `fly.toml` are relative to it. In ios-ci,
+  `ui-screenshots-path` is relative to it too. The default keeps today's
+  behaviour.
 
 ## [4.1.0] 2026-10-16
 

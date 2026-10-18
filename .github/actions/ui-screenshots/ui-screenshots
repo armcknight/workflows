@@ -6,7 +6,8 @@
 #       - each XCTestCase subclass in a Swift file under <test-dir> that the PR
 #         adds or changes. Run in a `pull_request` checkout of the merge commit,
 #         fetched with depth 2: its first parent is the base branch, so
-#         `HEAD^1..HEAD` is exactly the PR's change.
+#         `HEAD^1..HEAD` is exactly the PR's change. <test-dir> is relative to
+#         the current directory, which may be below the repository root.
 #       - each test ID in a `<!-- ui-screenshots: … -->` marker in $PR_BODY (the
 #         PR description), so a PR can name tests it does not change, such as
 #         an existing test that goes to the screen a fix changes. IDs are
@@ -39,7 +40,9 @@ tests() {
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     classes+=" $(sed -nE 's/^[[:space:]]*(final[[:space:]]+)?(public[[:space:]]+|internal[[:space:]]+)?class[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*:[[:space:]]*XCTestCase.*/\3/p' "$file" | tr '\n' ' ')"
-  done < <(git diff --name-only --diff-filter=AMR HEAD^1 HEAD -- "$dir" | grep '\.swift$' || true)
+  # --relative: print paths from the current directory, as sed reads them,
+  # not from the repository root.
+  done < <(git diff --relative --name-only --diff-filter=AMR HEAD^1 HEAD -- "$dir" | grep '\.swift$' || true)
 
   local ids id
   ids=$(printf '%s\n' $classes)

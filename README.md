@@ -61,9 +61,10 @@ S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run
 | `pr-number` | no (none) | PR to stage when the trigger is not `pull_request`: the `/build-staging` caller or the rebuild job in the refresh caller below. Setting it is what makes a staging build. Leave it out under `pull_request`. |
 | `rebuild` | no (`false`) | Set `true` only in the refresh caller's `rebuild` job. A `/refresh-staging` comment then starts the build, in place of `/build-staging`. |
 | `ui-screenshots-scheme` | no (none) | Scheme that runs the UI tests. Setting it turns on the `ui-screenshots` job. |
-| `ui-screenshots-path` | with the scheme | Directory of the UI test sources. Each `XCTestCase` class in a Swift file the PR adds or changes there is run with `-only-testing`, along with any test the PR description names (below). |
+| `ui-screenshots-path` | with the scheme | Directory of the UI test sources, relative to `working-directory`. Each `XCTestCase` class in a Swift file the PR adds or changes there is run with `-only-testing`, along with any test the PR description names (below). |
 | `ui-screenshots-target` | no (the scheme) | UI test target name, for `-only-testing`. |
 | `ui-screenshots-destination` | no (newest iPhone simulator) | `xcodebuild` destination. |
+| `working-directory` | no (`.`) | Directory of the app, relative to the repository root, such as `ios`. Bundler, Homebrew, arkana, xcodegen, fastlane and `xcodebuild` run there, so the `Gemfile`, `Brewfile`, project spec and `fastlane/` are there; the IPA, test report, test artifact and screenshots are read from there. |
 
 A PR can also name tests it does not change — say, an existing test that goes
 to the screen a fix changes — in a hidden marker in its description:
@@ -182,7 +183,8 @@ the output in its summary and gives a warning.
 | `test-args` | no (none) | Appended to `swift test`. |
 | `submodules` | no (none) | Passed to `actions/checkout`. |
 | `docker-build` | no (`true`) | Build the Docker image, without pushing it. |
-| `dockerfile` | no (`Dockerfile`) | The Dockerfile, relative to the repository root. |
+| `dockerfile` | no (`Dockerfile`) | The Dockerfile, relative to `working-directory`. |
+| `working-directory` | no (`.`) | Directory of the package, relative to the repository root, such as `server`. `swift build`, `swift test` and the Docker build run there: it is the Docker build context, and `.build` is cached from there. |
 
 `fly-deploy.yml`:
 
@@ -194,7 +196,8 @@ the output in its summary and gives a warning.
 | `url` | no (`https://<app>.fly.dev`) | The server's URL, for the health check. |
 | `require-sha` | no (`true`) | Wait for the commit in the health check's body, not only a 200. |
 | `health-timeout-seconds` | no (`180`) | How long to wait for the health check. |
-| `config` | no (`fly.toml`) | The Fly configuration file. |
+| `config` | no (`fly.toml`) | The Fly configuration file, relative to `working-directory`. |
+| `working-directory` | no (`.`) | Directory of the server, relative to the repository root, such as `server`. `flyctl deploy` runs there, so the `fly.toml` and the Docker build context are there. |
 
 Secret: `FLY_API_TOKEN`, a deploy token for the one app (`fly tokens create
 deploy --app <app>`), passed explicitly. The server's own secrets, such as
