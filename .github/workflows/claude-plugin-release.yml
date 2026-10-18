@@ -86,10 +86,14 @@ jobs:
       # at runtime, silently, with empty metadata — so this is the only place
       # that failure is visible.
       - name: Validate plugin manifest
-        run: claude plugin validate "${{ inputs.plugin-path }}"
+        env:
+          PLUGIN_PATH: ${{ inputs.plugin-path }}
+        run: claude plugin validate "$PLUGIN_PATH"
 
       - name: Validate marketplace manifest
-        run: claude plugin validate "${{ inputs.marketplace-path }}"
+        env:
+          MARKETPLACE_PATH: ${{ inputs.marketplace-path }}
+        run: claude plugin validate "$MARKETPLACE_PATH"
 
       # The tag is the release's name, but the manifest version is what users
       # actually receive. If they disagree, the release is a no-op for everyone.
@@ -110,8 +114,9 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          CHANGELOG: ${{ inputs.changelog }}
         run: |
           set -euo pipefail
           prepare-github-release "${GITHUB_REF_NAME}" \
-            --changelog "${{ inputs.changelog }}" \
+            --changelog "$CHANGELOG" \
             ${{ inputs.prerelease && '--prerelease' || '' }}
