@@ -47,6 +47,10 @@ edit a caller applies.
   `run` subcommand and `scripts/swift-package/cli-examples.sh` a `build`
   subcommand, for the steps that ran the UI tests and built the product
   inline.
+- **swift-package-ci**: the Python that reads the commands from a PR
+  description's `cli-examples` marker is now its own file,
+  `scripts/swift-package/cli-examples-commands.py`, not inline in
+  `cli-examples.sh`. No change in behavior.
 - **ci**: `make lint` and the `ci` workflow also shellcheck the scripts in
   `.github/actions/`.
 

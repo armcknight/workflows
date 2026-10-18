@@ -319,7 +319,7 @@ the path in `$SCRIPTS`.
 | `scripts/staging/` | `authorize.sh`, `check-commenter.sh`, `pr-state.sh`, `pr-head-ref.sh`, `publish.sh`, `refresh.sh`, `build-expiry.sh`, `cleanup.sh` | `ios-ci.yml`, `ota-refresh.yml`, `ota-cleanup.yml` |
 | `scripts/pr/` | `stale-comments.sh` | `ios-ci.yml`, `ota-refresh.yml`, `swift-package-ci.yml` |
 | `scripts/ios/` | `ui-screenshots.sh` | `ios-ci.yml` |
-| `scripts/swift-package/` | `cli-examples.sh` | `swift-package-ci.yml` |
+| `scripts/swift-package/` | `cli-examples.sh` (with `cli-examples-commands.py`) | `swift-package-ci.yml` |
 | `scripts/xcode/` | `prepare-env.sh`, `stamp-marketing-version.sh`, `export-app.sh` | `ios-ci.yml`, `macos-cask-release.yml` |
 | `scripts/signing/` | `install-match-key.sh`, `match-signing-identity.sh`, `sign-binaries.sh`, `notarize.sh` | `ios-ci.yml`, `macos-cask-release.yml`, `swiftpm-cask-release.yml` |
 | `scripts/release/` | `release-version.sh`, `source-version.sh`, `check-tag-version.sh`, `check-binaries.sh`, `cask-path.sh`, `bump-cask.sh`, `publish-github-release.sh` | `macos-cask-release.yml`, `swiftpm-cask-release.yml`, `github-release.yml`, `claude-plugin-release.yml` |

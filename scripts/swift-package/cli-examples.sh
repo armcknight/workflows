@@ -41,30 +41,8 @@ commands() {
   local product="$1"
   # The description is text anyone who can edit the PR writes; it is only
   # ever split into words here, never given to a shell.
-  printf '%s' "${PR_BODY:-}" | PRODUCT="$product" MAX="$MAX_COMMANDS" python3 -I -c '
-import json, os, re, shlex, sys
-product, limit, count = os.environ["PRODUCT"], int(os.environ["MAX"]), 0
-for block in re.findall(r"<!--\s*cli-examples:(.*?)-->", sys.stdin.read(), re.S):
-    for line in block.splitlines():
-        line = line.strip()
-        if line.startswith("$ "):
-            line = line[2:].strip()
-        if not line:
-            continue
-        try:
-            argv = shlex.split(line)
-        except ValueError as error:
-            print(f"::warning::Skipped `{line}`: {error}.", file=sys.stderr)
-            continue
-        if not argv or argv[0] != product:
-            print(f"::warning::Skipped `{line}`: it does not start with `{product}`.", file=sys.stderr)
-            continue
-        if count == limit:
-            print(f"::warning::Only the first {limit} commands run.", file=sys.stderr)
-            sys.exit(0)
-        print(json.dumps({"line": line, "argv": argv}))
-        count += 1
-'
+  printf '%s' "${PR_BODY:-}" \
+    | python3 -I "$(dirname "$0")/cli-examples-commands.py" "$product" "$MAX_COMMANDS"
 }
 
 build() {
