@@ -132,6 +132,20 @@ jobs:
       sha256: ${{ steps.package.outputs.sha256 }}
 
     steps:
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
       - name: Resolve version and paths
         id: ver
         env:
@@ -144,14 +158,9 @@ jobs:
             echo "::error::This workflow must be called from a tag push; got ref type ${GITHUB_REF_TYPE}."
             exit 1
           fi
-          VERSION="${TAG#v}"
-          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
-            echo "::error::Tag '${TAG}' is not a version tag (expected X.Y.Z or vX.Y.Z, optionally with a prerelease suffix)."
-            exit 1
-          fi
-          PROJECT="${PROJECT_INPUT:-${SCHEME}.xcodeproj}"
+          VERSION=$("$SCRIPTS/release/release-version.sh")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "project=${PROJECT_INPUT:-${SCHEME}.xcodeproj}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -178,23 +187,12 @@ jobs:
           RUN_XCODEGEN: ${{ inputs.run-xcodegen }}
         run: |
           set -euo pipefail
-          # Materialize gitignored config files (e.g. .envrc) from committed
-          # templates so xcodegen fileGroups validate.
-          for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
           # A project.yml that lists .env as a file group fails xcodegen spec
           # validation when the file is absent, and .env is always gitignored, so
-          # it never exists on a runner. Create it unconditionally — an empty one
-          # is enough to validate, and the arkana block below fills it in.
-          touch .env
+          # it never exists on a runner. prepare-env.sh always writes one —
+          # empty with no keys, which is enough to validate.
+          "$SCRIPTS/xcode/prepare-env.sh"
           if [ -n "${ARKANA_KEYS// /}" ]; then
-            # Resolve each requested key from the inherited secrets (case-insensitive,
-            # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
-            # Same resolution as ios-ci.yml, deliberately — one convention across repos.
-            : > .env
-            for key in $ARKANA_KEYS; do
-              val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
-              [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
-            done
             bundle exec arkana
           fi
           if [ "$RUN_XCODEGEN" = "true" ]; then
@@ -207,29 +205,13 @@ jobs:
           XCCONFIG: ${{ inputs.version-xcconfig }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          set -euo pipefail
-          if ! grep -qE '^MARKETING_VERSION' "$XCCONFIG"; then
-            echo "::error::${XCCONFIG} has no MARKETING_VERSION line to stamp."
-            exit 1
-          fi
-          sed -i '' -E "s/^MARKETING_VERSION = .*/MARKETING_VERSION = ${VERSION}/" "$XCCONFIG"
-          grep -E '^MARKETING_VERSION' "$XCCONFIG"
+          "$SCRIPTS/xcode/stamp-marketing-version.sh"
 
       - name: Install match SSH key
         env:
           MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
         run: |
-          set -euo pipefail
-          if [ -z "${MATCH_DEPLOY_KEY:-}" ]; then
-            echo "::error::MATCH_DEPLOY_KEY is required — an SSH private key with read access to the match repo."
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          # `echo` (not printf) so the key ends with the newline OpenSSH requires,
-          # whether or not the stored secret kept its trailing one.
-          echo "$MATCH_DEPLOY_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          "$SCRIPTS/signing/install-match-key.sh"
 
       - name: Fetch signing certificate with match
         id: signing
@@ -239,59 +221,20 @@ jobs:
           TEAM_ID: ${{ inputs.team-id }}
           APP_IDENTIFIER: ${{ inputs.app-identifier }}
           FASTLANE_SKIP_UPDATE_CHECK: "1"
+          KEYCHAIN: macos-cask-release
+          # Uses the Gemfile's fastlane.
+          FASTLANE: bundle exec fastlane
           LC_ALL: en_US.UTF-8
           LANG: en_US.UTF-8
         run: |
           set -euo pipefail
-          if [ -z "${MATCH_PASSWORD:-}" ]; then
-            echo "::error::MATCH_PASSWORD is required — the passphrase the match repo is encrypted with."
-            exit 1
-          fi
-          # Build a throwaway keychain and hand it to match explicitly. `setup_ci`
-          # would do this, but it exports the keychain settings as env vars into a
-          # single fastlane process — and each `fastlane run` here is its own
-          # process, so those would be lost before match ran.
-          KEYCHAIN_NAME="macos-cask-release"
-          KEYCHAIN_PASSWORD="$(uuidgen)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
-          # The substitution must word-split: `-s` takes the new search list as
-          # separate arguments, so quoting it would pass every existing keychain
-          # as one path and drop them all.
-          # shellcheck disable=SC2046
-          security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
-          # readonly: read the cert out of the match repo and make no Apple API
-          # calls, so no Apple credentials are needed here. skip_provisioning_
-          # profiles: a non-sandboxed hardened-runtime app needs no profile, and
-          # asking for one would require a registered App ID. app_identifier is
-          # still required — match validates the option even when it skips
-          # profiles, and fails with "No value found for 'app_identifier'".
-          bundle exec fastlane run match \
-            type:developer_id \
-            platform:macos \
-            readonly:true \
-            skip_provisioning_profiles:true \
-            git_url:"$MATCH_GIT_URL" \
-            team_id:"$TEAM_ID" \
-            app_identifier:"$APP_IDENTIFIER" \
-            keychain_name:"$KEYCHAIN_NAME" \
-            keychain_password:"$KEYCHAIN_PASSWORD"
-          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')"
-          if [ -z "$IDENTITY" ]; then
-            echo "::error::match did not put a 'Developer ID Application' identity in the keychain. Has the cert been created in the match repo yet? See this workflow's header for the one-time command."
-            security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
-            exit 1
-          fi
-          CERT_TEAM_ID="$(printf '%s' "$IDENTITY" | sed -E 's/.*\(([A-Z0-9]+)\)$/\1/')"
-          if [ "$CERT_TEAM_ID" != "$TEAM_ID" ]; then
-            echo "::error::Certificate belongs to team ${CERT_TEAM_ID}, but team-id input says ${TEAM_ID}."
-            exit 1
-          fi
-          echo "Signing identity: ${IDENTITY}"
+          # Before match runs, so the cleanup step deletes the keychain even
+          # when match fails.
+          echo "keychain=${KEYCHAIN}" >> "$GITHUB_OUTPUT"
+          IDENTITY=$("$SCRIPTS/signing/match-signing-identity.sh")
           echo "identity=${IDENTITY}" >> "$GITHUB_OUTPUT"
-          echo "team-id=${CERT_TEAM_ID}" >> "$GITHUB_OUTPUT"
-          echo "keychain=${KEYCHAIN_NAME}" >> "$GITHUB_OUTPUT"
+          # match-signing-identity checked the cert belongs to this team.
+          echo "team-id=${TEAM_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Build signed archive
         env:
@@ -315,45 +258,13 @@ jobs:
       - name: Export app
         id: export
         env:
+          ARCHIVE: build/app.xcarchive
+          EXPORT_DIR: build/export
           APP_NAME: ${{ inputs.app-name }}
           TEAM_ID: ${{ steps.signing.outputs.team-id }}
         run: |
           set -euo pipefail
-          cat > "${RUNNER_TEMP}/ExportOptions.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>developer-id</string>
-            <key>teamID</key>
-            <string>${TEAM_ID}</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>signingCertificate</key>
-            <string>Developer ID Application</string>
-          </dict>
-          </plist>
-          PLIST
-          APP="build/export/${APP_NAME}.app"
-          xcodebuild -exportArchive \
-            -archivePath build/app.xcarchive \
-            -exportPath build/export \
-            -exportOptionsPlist "${RUNNER_TEMP}/ExportOptions.plist" 2>&1 || \
-            echo "::warning::-exportArchive failed; falling back to the archive's built product."
-          if [ ! -d "$APP" ]; then
-            mkdir -p build/export
-            cp -R "build/app.xcarchive/Products/Applications/${APP_NAME}.app" build/export/
-          fi
-          # A cask download is quarantined, so anything short of a Developer ID
-          # signature with hardened runtime is dead on arrival. Fail here rather
-          # than publish an app Gatekeeper will refuse.
-          codesign --verify --strict --deep --verbose=2 "$APP"
-          codesign -dvvv "$APP" 2>&1 | tee "${RUNNER_TEMP}/codesign.txt"
-          grep -q 'Authority=Developer ID Application' "${RUNNER_TEMP}/codesign.txt" || {
-            echo "::error::${APP} is not signed by a Developer ID Application certificate."; exit 1; }
-          grep -qE 'flags=.*runtime' "${RUNNER_TEMP}/codesign.txt" || {
-            echo "::error::${APP} is not built with the hardened runtime; notarization would fail. Set ENABLE_HARDENED_RUNTIME=YES."; exit 1; }
+          APP=$("$SCRIPTS/xcode/export-app.sh")
           echo "app=${APP}" >> "$GITHUB_OUTPUT"
 
       - name: Notarize and staple
@@ -364,31 +275,9 @@ jobs:
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           set -euo pipefail
-          if [ -z "${NOTARY_KEY:-}" ] || [ -z "${NOTARY_KEY_ID:-}" ] || [ -z "${NOTARY_ISSUER_ID:-}" ]; then
-            echo "::error::NOTARY_KEY / NOTARY_KEY_ID / NOTARY_ISSUER_ID are required. Create an App Store Connect API key with the Developer role and store the .p8 base64-encoded."
-            exit 1
-          fi
-          KEY_PATH="${RUNNER_TEMP}/notary.p8"
-          printf '%s' "$NOTARY_KEY" | base64 --decode > "$KEY_PATH"
           # notarytool takes an archive, not a bundle.
           ditto -c -k --keepParent "$APP" "${RUNNER_TEMP}/notarize.zip"
-          set +e
-          SUBMIT_JSON="$(xcrun notarytool submit "${RUNNER_TEMP}/notarize.zip" \
-            --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
-            --wait --timeout 30m --output-format json)"
-          SUBMIT_STATUS=$?
-          set -e
-          echo "$SUBMIT_JSON"
-          ID="$(printf '%s' "$SUBMIT_JSON" | jq -r '.id // empty')"
-          STATUS="$(printf '%s' "$SUBMIT_JSON" | jq -r '.status // empty')"
-          if [ "$STATUS" != "Accepted" ] || [ "$SUBMIT_STATUS" -ne 0 ]; then
-            echo "::error::Notarization did not succeed (status: ${STATUS:-unknown})."
-            [ -n "$ID" ] && xcrun notarytool log "$ID" \
-              --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" || true
-            rm -f "$KEY_PATH"
-            exit 1
-          fi
-          rm -f "$KEY_PATH"
+          ZIP="${RUNNER_TEMP}/notarize.zip" "$SCRIPTS/signing/notarize.sh"
           # Staple so the app validates offline, then check what Gatekeeper will
           # see on a user's machine.
           xcrun stapler staple "$APP"
@@ -451,25 +340,7 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           SHA256: ${{ steps.package.outputs.sha256 }}
         run: |
-          set -euo pipefail
-          CASK_PATH="Casks/${CASK_NAME}.rb"
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}.git" tap
-          cd tap
-          if [ ! -f "$CASK_PATH" ]; then
-            echo "::error::${TAP_REPO} has no ${CASK_PATH}. Add the cask file to the tap first; this workflow only bumps version and sha256."
-            exit 1
-          fi
-          sed -i '' -E "s/^  version \".*\"$/  version \"${VERSION}\"/" "$CASK_PATH"
-          sed -i '' -E "s/^  sha256 \".*\"$/  sha256 \"${SHA256}\"/" "$CASK_PATH"
-          if git diff --quiet; then
-            echo "no cask changes to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$CASK_PATH"
-          git commit -m "${CASK_NAME}: bump to ${VERSION}"
-          git push
+          CASK_PATH="Casks/${CASK_NAME}.rb" "$SCRIPTS/release/bump-cask.sh"
 
       - name: Clean up signing keychain and SSH key
         if: always()

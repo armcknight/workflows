@@ -9,6 +9,11 @@
 #     dropped. The first word must be <product>; other lines are skipped with a
 #     warning. At most $MAX_COMMANDS commands.
 #
+#   cli-examples build <product> <package-dir> [<build-arg>...]
+#     Build <product> of the package in <package-dir> with `swift build`, with
+#     each <build-arg>, and print the path of the executable. The build's output
+#     goes to stderr.
+#
 #   cli-examples run <binary> <workdir> <commands-file> <out-dir>
 #     Run each command in <commands-file> in <workdir>, with <binary> in place
 #     of its first word, no stdin and a $TIMEOUT-second limit. Write its stdout
@@ -60,6 +65,15 @@ for block in re.findall(r"<!--\s*cli-examples:(.*?)-->", sys.stdin.read(), re.S)
         print(json.dumps({"line": line, "argv": argv}))
         count += 1
 '
+}
+
+build() {
+  local product="$1" dir="$2" bin_path
+  shift 2
+  cd "$dir"
+  swift build --product "$product" "$@" >&2
+  bin_path=$(swift build --show-bin-path "$@")
+  printf '%s/%s\n' "$bin_path" "$product"
 }
 
 run() {
@@ -186,7 +200,8 @@ status_note() {
 
 case "${1:-}" in
   commands) shift; commands "$@" ;;
+  build) shift; build "$@" ;;
   run) shift; run "$@" ;;
   report) shift; report "$@" ;;
-  *) echo "usage: cli-examples commands <product> | run <binary> <workdir> <commands-file> <out-dir> | report <commands-file> <base-out-dir> <head-out-dir> <sha> <comment-file>" >&2; exit 2 ;;
+  *) echo "usage: cli-examples commands <product> | build <product> <package-dir> [<build-arg>...] | run <binary> <workdir> <commands-file> <out-dir> | report <commands-file> <base-out-dir> <head-out-dir> <sha> <comment-file>" >&2; exit 2 ;;
 esac
