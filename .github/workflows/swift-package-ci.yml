@@ -101,9 +101,7 @@ jobs:
           BUILD_ARGS: ${{ inputs.build-args }}
         run: |
           # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-          swift build --product "$PRODUCT" $BUILD_ARGS
-          # shellcheck disable=SC2086
-          BIN="$(swift build --show-bin-path $BUILD_ARGS)/$PRODUCT"
+          BIN=$(cli-examples build "$PRODUCT" "$PWD" $BUILD_ARGS)
           cli-examples run "$BIN" "$PWD" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/head"
 
       - name: Build and run on the base branch
@@ -119,13 +117,10 @@ jobs:
           if [ -n "$SUBMODULES" ]; then
             git -C "$SRC" submodule update --init --recursive
           fi
-          cd "$SRC"
           # A new product, or a base that does not build, is not a failure:
           # the comment then shows only this PR's output.
           # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-          if swift build --product "$PRODUCT" $BUILD_ARGS; then
-            # shellcheck disable=SC2086
-            BIN="$(swift build --show-bin-path $BUILD_ARGS)/$PRODUCT"
+          if BIN=$(cli-examples build "$PRODUCT" "$SRC" $BUILD_ARGS); then
             cli-examples run "$BIN" "$SRC" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/base"
             echo "out=$RUNNER_TEMP/base" >> "$GITHUB_OUTPUT"
           else

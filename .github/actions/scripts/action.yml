@@ -1,0 +1,37 @@
+name: Workflow scripts
+description: >
+  Check out scripts/ of this repository at the commit of the calling reusable
+  workflow, move it out of the workspace, and set SCRIPTS to its path. Every
+  reusable workflow here calls this before it runs a script.
+
+# The `uses:` ref of this action is a static `@main`, but the scripts come from
+# the `ref` input. A reusable workflow passes `job.workflow_sha`, so a caller
+# that pins `@4` gets the `@4` scripts. The workflow passes the `job` values in,
+# because this action reads them from the workflow's own context, not its own.
+inputs:
+  repository:
+    description: The `owner/repo` of the reusable workflow. Pass `job.workflow_repository`.
+    required: true
+  ref:
+    description: The commit of the reusable workflow. Pass `job.workflow_sha`.
+    required: true
+
+runs:
+  using: composite
+  steps:
+  - name: Check out the scripts
+    uses: actions/checkout@v5
+    with:
+      repository: ${{ inputs.repository }}
+      ref: ${{ inputs.ref }}
+      path: .armcknight-workflows
+      sparse-checkout: scripts
+
+  # Out of the workspace, so that the scripts are not in the caller's checkout.
+  # A composite step runs at the workspace root, whatever the workflow's
+  # defaults.run.working-directory is, and that is where the checkout is.
+  - name: Move the scripts out of the workspace
+    shell: bash
+    run: |
+      mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+      echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"

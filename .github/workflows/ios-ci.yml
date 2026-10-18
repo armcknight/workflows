@@ -112,6 +112,13 @@ jobs:
     permissions:
       pull-requests: write
     steps:
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
     - name: Check the staging request
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -121,26 +128,7 @@ jobs:
         COMMENT_ID: ${{ github.event.comment.id }}
         PR_NUMBER: ${{ inputs.pr-number }}
       run: |
-        if [ -z "$PR_NUMBER" ]; then
-          echo "::error::Set pr-number to stage a PR outside pull_request." >&2
-          exit 1
-        fi
-        if [ "$EVENT" = "issue_comment" ]; then
-          case "$ASSOCIATION" in
-            OWNER|MEMBER|COLLABORATOR) echo "Commenter is $ASSOCIATION; continuing." ;;
-            *) echo "::error::Commenter is $ASSOCIATION, which cannot write to this repo. Refusing to stage." >&2; exit 1 ;;
-          esac
-          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-            -f content=eyes --silent || true
-        fi
-        # A fork's code must not run with this repo's secrets, and closing a PR
-        # deletes its staging builds on purpose.
-        PR_STATE=$(gh pr view "$PR_NUMBER" --json state,isCrossRepository \
-          --jq 'if .isCrossRepository then "FORK" else .state end')
-        if [ "$PR_STATE" != "OPEN" ]; then
-          echo "::error::PR #$PR_NUMBER is $PR_STATE; only an open PR from a branch in this repo is staged." >&2
-          exit 1
-        fi
+        "$SCRIPTS/staging/authorize.sh"
 
   test:
     name: Test
@@ -167,6 +155,13 @@ jobs:
         # requested PR's head.
         ref: ${{ github.event_name != 'pull_request' && inputs.pr-number != '' && format('refs/pull/{0}/head', inputs.pr-number) || '' }}
 
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
     - name: Setup Ruby
       uses: ruby/setup-ruby@v1
       with:
@@ -191,16 +186,7 @@ jobs:
         ALL_SECRETS: ${{ toJSON(secrets) }}
         ARKANA_KEYS: ${{ inputs.arkana-keys }}
       run: |
-        # Materialize gitignored config files (e.g. .envrc) from committed
-        # templates so xcodegen fileGroups validate.
-        for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        # Resolve each requested key from the inherited secrets (case-insensitive,
-        # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
-        : > .env
-        for key in $ARKANA_KEYS; do
-          val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
-          [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
-        done
+        "$SCRIPTS/xcode/prepare-env.sh"
         bundle exec arkana
         xcodegen
 
@@ -247,6 +233,13 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
     steps:
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
     # Outside `pull_request` there is no head_ref, so look up the requested PR's
     # head branch. An empty ref makes the checkout below fall back to the default
     # branch and stage the wrong code, so fail instead of passing one on.
@@ -259,16 +252,7 @@ jobs:
         GH_REPO: ${{ github.repository }}
         PR_NUMBER: ${{ inputs.pr-number }}
       run: |
-        HEAD_REF=""
-        for attempt in 1 2 3; do
-          HEAD_REF=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName) && [ -n "$HEAD_REF" ] && break
-          echo "::warning::Attempt $attempt to look up the head branch of PR #$PR_NUMBER failed." >&2
-          sleep $((attempt * 5))
-        done
-        if [ -z "$HEAD_REF" ]; then
-          echo "::error::Could not look up the head branch of PR #$PR_NUMBER. Refusing to stage the default branch." >&2
-          exit 1
-        fi
+        HEAD_REF=$("$SCRIPTS/staging/pr-head-ref.sh")
         echo "head-ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
 
     - name: Checkout code
@@ -305,25 +289,13 @@ jobs:
         ALL_SECRETS: ${{ toJSON(secrets) }}
         ARKANA_KEYS: ${{ inputs.arkana-keys }}
       run: |
-        # Materialize gitignored config files (e.g. .envrc) from committed
-        # templates so xcodegen fileGroups validate.
-        for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        # Resolve each requested key from the inherited secrets (case-insensitive,
-        # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
-        : > .env
-        for key in $ARKANA_KEYS; do
-          val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
-          [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
-        done
+        "$SCRIPTS/xcode/prepare-env.sh"
         bundle exec arkana
         xcodegen
 
     - name: Install match SSH key
       run: |
-        mkdir -p ~/.ssh
-        echo "$MATCH_DEPLOY_KEY" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan github.com >> ~/.ssh/known_hosts
+        "$SCRIPTS/signing/install-match-key.sh"
       env:
         MATCH_DEPLOY_KEY: ${{ secrets.MATCH_DEPLOY_KEY }}
 
@@ -350,42 +322,15 @@ jobs:
     - name: Publish OTA build to S3 and comment on PR
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
         S3_BUCKET: ${{ vars.S3_BUCKET }}
         AWS_REGION: ${{ vars.AWS_REGION }}
         PROJECT: ${{ github.event.repository.name }}
         PR_NUMBER: ${{ inputs.pr-number }}
         RUN_ID: ${{ github.run_id }}
-        IPA_NAME: ${{ inputs.ipa-name }}
+        IPA: ${{ inputs.ipa-name }}.ipa
       run: |
-        SHA=$(git rev-parse HEAD)
-        RESULT=$(ota-publish \
-          --mode initial \
-          --ipa "${IPA_NAME}.ipa" \
-          --bucket "$S3_BUCKET" \
-          --region "$AWS_REGION" \
-          --project "$PROJECT" \
-          --pr "$PR_NUMBER" \
-          --run-id "$RUN_ID" \
-          --ttl "$LINK_TTL_SECONDS")
-        LANDING=$(echo "$RESULT" | jq -r '.landingUrl')
-        EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
-        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
-
-        printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed. Comment `/build-staging` for a new build of the newest commit._\n' \
-          "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
-        BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
-        if [ -n "$BUILD_EXPIRES" ]; then
-          printf '\n_The build itself is deleted %s, by the lifecycle rule on the staging bucket._\n' \
-            "$BUILD_EXPIRES" >> /tmp/pr-comment.md
-        fi
-
-        # A new build makes the PR's earlier install links, refresh notices and
-        # `/refresh-staging` and `/build-staging` commands stale (not its UI
-        # screenshots, which the ui-screenshots job replaces itself). Read them
-        # before posting, so the new comment is never among them.
-        stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
-        gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command
+        "$SCRIPTS/staging/publish.sh"
 
   ui-screenshots:
     name: UI screenshots
@@ -412,6 +357,13 @@ jobs:
     # ref.
     - name: Set up ui-screenshots
       uses: armcknight/workflows/.github/actions/ui-screenshots@main
+
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
 
     - name: Set up stale-comments
       uses: armcknight/workflows/.github/actions/stale-comments@main
@@ -464,16 +416,7 @@ jobs:
         ALL_SECRETS: ${{ toJSON(secrets) }}
         ARKANA_KEYS: ${{ inputs.arkana-keys }}
       run: |
-        # Materialize gitignored config files (e.g. .envrc) from committed
-        # templates so xcodegen fileGroups validate.
-        for ex in .env.example .envrc.example; do real="${ex%.example}"; { [ -f "$ex" ] && [ ! -f "$real" ] && cp "$ex" "$real"; } || true; done
-        # Resolve each requested key from the inherited secrets (case-insensitive,
-        # so GH secret SENTRYDSN satisfies arkana key SentryDSN) and write to .env.
-        : > .env
-        for key in $ARKANA_KEYS; do
-          val=$(printf '%s' "$ALL_SECRETS" | jq -r --arg k "$key" '[to_entries[] | select(.key | ascii_downcase == ($k | ascii_downcase))][0].value // empty')
-          [ -n "$val" ] && printf '%s=%s\n' "$key" "$val" >> .env
-        done
+        "$SCRIPTS/xcode/prepare-env.sh"
         bundle exec arkana
         xcodegen
 
@@ -485,22 +428,11 @@ jobs:
         DESTINATION: ${{ inputs.ui-screenshots-destination }}
         ONLY_TESTING: ${{ steps.tests.outputs.only-testing }}
       run: |
-        DESTINATION="${DESTINATION:-$(ui-screenshots destination)}"
         # Keep going when a test fails: its screenshots, and the one XCTest
         # takes at the failure, are what explain it. The publish step fails the
         # job afterwards.
-        set +e
         # shellcheck disable=SC2086 # ONLY_TESTING is one argument per test class.
-        xcodebuild test \
-          -scheme "$SCHEME" \
-          -destination "$DESTINATION" \
-          -resultBundlePath ui-screenshots.xcresult \
-          $ONLY_TESTING \
-          CODE_SIGNING_ALLOWED=NO \
-          | xcbeautify
-        STATUS=${PIPESTATUS[0]}
-        set -e
-        if [ "$STATUS" -eq 0 ]; then
+        if ui-screenshots run "$SCHEME" "$DESTINATION" ui-screenshots.xcresult $ONLY_TESTING; then
           echo "passed=true" >> "$GITHUB_OUTPUT"
         else
           echo "passed=false" >> "$GITHUB_OUTPUT"

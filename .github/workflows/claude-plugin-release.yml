@@ -70,6 +70,13 @@ jobs:
           # needs the tag's history to resolve it.
           fetch-depth: 0
 
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+      - name: Check out the scripts
+        uses: armcknight/workflows/.github/actions/scripts@main
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
@@ -92,19 +99,10 @@ jobs:
       # actually receive. If they disagree, the release is a no-op for everyone.
       - name: Check tag matches the manifest version
         env:
-          PLUGIN_PATH: ${{ inputs.plugin-path }}
+          TAG: ${{ github.ref_name }}
+          VERSION_SOURCE: ${{ inputs.plugin-path }}/.claude-plugin/plugin.json
         run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          MANIFEST="$PLUGIN_PATH/.claude-plugin/plugin.json"
-          VERSION=$(jq -r .version "$MANIFEST")
-          # An RC tag like 0.1.1-RC1 should match the manifest's base 0.1.1.
-          BASE="${TAG%%-*}"
-          if [ "$BASE" != "$VERSION" ]; then
-            echo "::error file=$MANIFEST::Manifest version ($VERSION) does not match base of tag ($TAG). Bump the manifest, or installs will not move."
-            exit 1
-          fi
-          echo "Tag $TAG agrees with manifest version $VERSION"
+          VERSION=$(jq -r .version "$VERSION_SOURCE") "$SCRIPTS/release/check-tag-version.sh"
 
       - name: Install armcknight/tools
         run: |
