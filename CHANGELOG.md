@@ -33,6 +33,11 @@ edit a caller applies.
   pinned to `@main`, so a caller pinned to a tag ran an older workflow with the
   newest scripts, and a change to a script's interface on `main` could break
   it. No caller change.
+- **swiftpm-cask-release**: the README now names the signing inputs and secrets
+  the workflow reads — `match-git-url`, `team-id`, `bundle-id`,
+  `MATCH_PASSWORD` and `MATCH_DEPLOY_KEY` — in place of
+  `DEVELOPER_ID_P12_BASE64` and `DEVELOPER_ID_P12_PASSWORD`, and lists the
+  `submodules` input. Docs only; the workflow does not change.
 
 ### Deprecated
 
