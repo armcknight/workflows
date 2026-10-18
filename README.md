@@ -305,7 +305,9 @@ operation runs on a workstation or on a different CI provider. A script that
 gives a value back prints it on stdout, and the workflow writes it to
 `$GITHUB_OUTPUT`. The workflows check the scripts out at the commit of the
 workflow (`job.workflow_sha`), so a caller that pins `@4` also gets the `@4`
-scripts.
+scripts. Each job does this with one step, the
+[`scripts`](.github/actions/scripts/action.yml) composite action, which puts
+the path in `$SCRIPTS`.
 
 | Directory | Scripts | Used by |
 |-----------|---------|---------|

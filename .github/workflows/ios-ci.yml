@@ -112,21 +112,12 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-    # The scripts in this repository, at the commit of this workflow. They go
-    # out of the workspace, so that they are not in the caller's checkout.
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
     - name: Check out the scripts
-      uses: actions/checkout@v5
+      uses: armcknight/workflows/.github/actions/scripts@main
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
-        path: .armcknight-workflows
-        sparse-checkout: scripts
-    - name: Move the scripts out of the workspace
-      # The checkout above is at the workspace root, not in working-directory.
-      working-directory: .
-      run: |
-        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Check the staging request
       env:
@@ -164,21 +155,12 @@ jobs:
         # requested PR's head.
         ref: ${{ github.event_name != 'pull_request' && inputs.pr-number != '' && format('refs/pull/{0}/head', inputs.pr-number) || '' }}
 
-    # The scripts in this repository, at the commit of this workflow. They go
-    # out of the workspace, so that they are not in the caller's checkout.
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
     - name: Check out the scripts
-      uses: actions/checkout@v5
+      uses: armcknight/workflows/.github/actions/scripts@main
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
-        path: .armcknight-workflows
-        sparse-checkout: scripts
-    - name: Move the scripts out of the workspace
-      # The checkout above is at the workspace root, not in working-directory.
-      working-directory: .
-      run: |
-        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Setup Ruby
       uses: ruby/setup-ruby@v1
@@ -251,21 +233,12 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
     steps:
-    # The scripts in this repository, at the commit of this workflow. They go
-    # out of the workspace, so that they are not in the caller's checkout.
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
     - name: Check out the scripts
-      uses: actions/checkout@v5
+      uses: armcknight/workflows/.github/actions/scripts@main
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
-        path: .armcknight-workflows
-        sparse-checkout: scripts
-    - name: Move the scripts out of the workspace
-      # The checkout above is at the workspace root, not in working-directory.
-      working-directory: .
-      run: |
-        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     # Outside `pull_request` there is no head_ref, so look up the requested PR's
     # head branch. An empty ref makes the checkout below fall back to the default
@@ -385,21 +358,12 @@ jobs:
     - name: Set up ui-screenshots
       uses: armcknight/workflows/.github/actions/ui-screenshots@main
 
-    # The scripts in this repository, at the commit of this workflow. They go
-    # out of the workspace, so that they are not in the caller's checkout.
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
     - name: Check out the scripts
-      uses: actions/checkout@v5
+      uses: armcknight/workflows/.github/actions/scripts@main
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
-        path: .armcknight-workflows
-        sparse-checkout: scripts
-    - name: Move the scripts out of the workspace
-      # The checkout above is at the workspace root, not in working-directory.
-      working-directory: .
-      run: |
-        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Set up stale-comments
       uses: armcknight/workflows/.github/actions/stale-comments@main

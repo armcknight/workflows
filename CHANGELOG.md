@@ -57,8 +57,10 @@ edit a caller applies.
   `scripts/staging/`, `scripts/xcode/`, `scripts/signing/` and
   `scripts/release/`, as for vapor-ci and fly-deploy. The steps check the
   scripts out at the workflow's commit and only set their variables, so the
-  same operations run on a workstation or on a different CI provider. No caller
-  change is needed. The changes in behavior:
+  same operations run on a workstation or on a different CI provider. Every
+  reusable workflow, vapor-ci and fly-deploy too, checks the scripts out with
+  one step, the new `scripts` composite action. No caller change is needed.
+  The changes in behavior:
   - **ios-ci**: the Stage job fails with a named error when `MATCH_DEPLOY_KEY`
     is empty, in place of a later match failure.
   - **macos-cask-release**: the cask bump authenticates its push with a

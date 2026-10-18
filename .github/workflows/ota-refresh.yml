@@ -65,19 +65,12 @@ jobs:
       LINK_TTL_SECONDS: "43200"
 
     steps:
-    # The scripts in this repository, at the commit of this workflow. They go
-    # out of the workspace, so that they are not in the caller's checkout.
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
     - name: Check out the scripts
-      uses: actions/checkout@v5
+      uses: armcknight/workflows/.github/actions/scripts@main
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
-        path: .armcknight-workflows
-        sparse-checkout: scripts
-    - name: Move the scripts out of the workspace
-      run: |
-        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     # This job assumes the AWS role and mints a presigned link to the build, so
     # a commenter who cannot write to the repo must not get an install link.
