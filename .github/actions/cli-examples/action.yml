@@ -5,6 +5,10 @@ description: >
   PR comment that shows the change in their output. Used by
   swift-package-ci.yml's cli-examples job.
 
+  Deprecated: kept for callers pinned to 4.2.0 or earlier. The workflows now
+  check out scripts/swift-package/cli-examples.sh at their own commit and run it from there.
+  Removed in the next major version.
+
 runs:
   using: composite
   steps:

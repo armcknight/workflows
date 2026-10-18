@@ -4,6 +4,10 @@ description: >
   staging bucket's lifecycle rule deletes a build. Shared by ios-ci.yml and
   ota-refresh.yml.
 
+  Deprecated: kept for callers pinned to 4.2.0 or earlier. The workflows now
+  check out scripts/staging/build-expiry.sh at their own commit and run it from there.
+  Removed in the next major version.
+
 runs:
   using: composite
   steps:

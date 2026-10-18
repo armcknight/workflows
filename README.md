@@ -320,6 +320,10 @@ Tags are bare, with no `v` prefix, the same as `armcknight/tools`. A release
 candidate carries an `-RC<n>` suffix and never moves the `1` alias, so a caller
 pinned to `1` never picks one up.
 
+The shell scripts the workflows run are in [`scripts/`](scripts). Each job
+checks them out at the commit of its workflow (`job.workflow_sha`), so a pinned
+caller runs the scripts of the release it pins, never those of `main`.
+
 A major bump is a signal, not a failure. Read that release's `### Caller
 migration` block, apply the edit it names, and move the pin to `2`.
 

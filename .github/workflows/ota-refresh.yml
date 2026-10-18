@@ -96,13 +96,21 @@ jobs:
     - name: Install ota-publish
       run: brew install armcknight/tools/tools
 
-    # Shared with ios-ci.yml. Pinned to main: a reusable workflow cannot refer
-    # to an action at its own ref.
-    - name: Set up stale-comments
-      uses: armcknight/workflows/.github/actions/stale-comments@main
-
-    - name: Set up build-expiry
-      uses: armcknight/workflows/.github/actions/build-expiry@main
+    # The scripts in this repository, at the commit of this workflow. They go
+    # out of the workspace, so that they are not in the caller's checkout. This
+    # repository is public, so the job needs no `contents` permission for it.
+    - name: Check out the scripts
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .armcknight-workflows
+        sparse-checkout: scripts
+    - name: Move the scripts out of the workspace
+      working-directory: .
+      run: |
+        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Re-sign OTA link and comment on PR
       id: refresh
@@ -126,7 +134,7 @@ jobs:
         # The PR's comments that a refresh makes stale, this run's own
         # `/refresh-staging` command included. Read before posting anything, so a
         # comment this run posts is never among them.
-        stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
+        "$SCRIPTS/pr/stale-comments.sh" collect "$PR_NUMBER" /tmp/stale-comments.jsonl
 
         # Explain on the PR why there is no link, then fail the check.
         fail_missing_build() {
@@ -137,7 +145,7 @@ jobs:
           # The commands are answered, and this notice replaces earlier ones.
           # Keep the old links visible: with an explicit run-id, another build
           # of the PR can still be there.
-          stale-comments hide /tmp/stale-comments.jsonl command notice
+          "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl command notice
           exit 1
         }
 
@@ -185,7 +193,7 @@ jobs:
               printf 'The staging build for this PR expired: it was made %s days ago, and the staging bucket deletes builds after %s days.\n\nMaking a new staging build now ([run](%s)). Its install link will be posted here when the Stage job finishes.\n' \
                 "$AGE_DAYS" "$RETENTION_DAYS" "$RUN_URL" > /tmp/pr-comment.md
               gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-              stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command
+              "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl staged refreshed notice command
               echo "rebuild=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -208,7 +216,7 @@ jobs:
           --ttl "$LINK_TTL_SECONDS")
         LANDING=$(echo "$RESULT" | jq -r '.landingUrl')
         EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
-        BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
+        BUILD_EXPIRES=$("$SCRIPTS/staging/build-expiry.sh" "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
 
         printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
           "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
@@ -218,4 +226,4 @@ jobs:
         fi
 
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command
+        "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl staged refreshed notice command

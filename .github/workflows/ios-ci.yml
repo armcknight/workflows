@@ -339,13 +339,20 @@ jobs:
         aws-region: ${{ vars.AWS_REGION }}
         role-duration-seconds: ${{ env.LINK_TTL_SECONDS }}
 
-    # Shared with ota-refresh.yml. Pinned to main: a reusable workflow cannot
-    # refer to an action at its own ref.
-    - name: Set up stale-comments
-      uses: armcknight/workflows/.github/actions/stale-comments@main
-
-    - name: Set up build-expiry
-      uses: armcknight/workflows/.github/actions/build-expiry@main
+    # The scripts in this repository, at the commit of this workflow. They go
+    # out of the workspace, so that they are not in the caller's checkout.
+    - name: Check out the scripts
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .armcknight-workflows
+        sparse-checkout: scripts
+    - name: Move the scripts out of the workspace
+      working-directory: .
+      run: |
+        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Publish OTA build to S3 and comment on PR
       env:
@@ -373,7 +380,7 @@ jobs:
 
         printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed. Comment `/build-staging` for a new build of the newest commit._\n' \
           "${SHA::7}" "$RUN_ID" "$RUN_URL" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
-        BUILD_EXPIRES=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
+        BUILD_EXPIRES=$("$SCRIPTS/staging/build-expiry.sh" "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
         if [ -n "$BUILD_EXPIRES" ]; then
           printf '\n_The build itself is deleted %s, by the lifecycle rule on the staging bucket._\n' \
             "$BUILD_EXPIRES" >> /tmp/pr-comment.md
@@ -383,9 +390,9 @@ jobs:
         # `/refresh-staging` and `/build-staging` commands stale (not its UI
         # screenshots, which the ui-screenshots job replaces itself). Read them
         # before posting, so the new comment is never among them.
-        stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
+        "$SCRIPTS/pr/stale-comments.sh" collect "$PR_NUMBER" /tmp/stale-comments.jsonl
         gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        stale-comments hide /tmp/stale-comments.jsonl staged refreshed notice command
+        "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl staged refreshed notice command
 
   ui-screenshots:
     name: UI screenshots
@@ -408,13 +415,20 @@ jobs:
         # `HEAD^1..HEAD` is exactly the PR's change.
         fetch-depth: 2
 
-    # Pinned to main: a reusable workflow cannot refer to an action at its own
-    # ref.
-    - name: Set up ui-screenshots
-      uses: armcknight/workflows/.github/actions/ui-screenshots@main
-
-    - name: Set up stale-comments
-      uses: armcknight/workflows/.github/actions/stale-comments@main
+    # The scripts in this repository, at the commit of this workflow. They go
+    # out of the workspace, so that they are not in the caller's checkout.
+    - name: Check out the scripts
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .armcknight-workflows
+        sparse-checkout: scripts
+    - name: Move the scripts out of the workspace
+      working-directory: .
+      run: |
+        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Find the UI tests this PR adds or changes
       id: tests
@@ -429,7 +443,7 @@ jobs:
           echo "::error::Set ui-screenshots-path along with ui-screenshots-scheme."
           exit 1
         fi
-        ONLY_TESTING=$(ui-screenshots tests "$TEST_DIR" "$TEST_TARGET")
+        ONLY_TESTING=$("$SCRIPTS/ios/ui-screenshots.sh" tests "$TEST_DIR" "$TEST_TARGET")
         echo "only-testing=$ONLY_TESTING" >> "$GITHUB_OUTPUT"
         if [ -z "$ONLY_TESTING" ]; then
           echo "This PR adds or changes no UI tests under $TEST_DIR and names none in a ui-screenshots marker; nothing to screenshot."
@@ -485,7 +499,7 @@ jobs:
         DESTINATION: ${{ inputs.ui-screenshots-destination }}
         ONLY_TESTING: ${{ steps.tests.outputs.only-testing }}
       run: |
-        DESTINATION="${DESTINATION:-$(ui-screenshots destination)}"
+        DESTINATION="${DESTINATION:-$("$SCRIPTS/ios/ui-screenshots.sh" destination)}"
         # Keep going when a test fails: its screenshots, and the one XCTest
         # takes at the failure, are what explain it. The publish step fails the
         # job afterwards.
@@ -515,15 +529,15 @@ jobs:
         PASSED: ${{ steps.run.outputs.passed }}
       run: |
         if [ -d ui-screenshots.xcresult ]; then
-          ui-screenshots publish ui-screenshots.xcresult "$PR_NUMBER" "$SHA" "${PASSED:-false}" /tmp/ui-screenshots.md
+          "$SCRIPTS/ios/ui-screenshots.sh" publish ui-screenshots.xcresult "$PR_NUMBER" "$SHA" "${PASSED:-false}" /tmp/ui-screenshots.md
         else
           echo "The UI tests made no result bundle."
         fi
         if [ -s /tmp/ui-screenshots.md ]; then
           # Only the newest set of screenshots stays visible.
-          stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
+          "$SCRIPTS/pr/stale-comments.sh" collect "$PR_NUMBER" /tmp/stale-comments.jsonl
           gh pr comment "$PR_NUMBER" --body-file /tmp/ui-screenshots.md
-          stale-comments hide /tmp/stale-comments.jsonl media
+          "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl media
         fi
         if [ "$PASSED" != "true" ]; then
           echo "::error::The UI tests failed."

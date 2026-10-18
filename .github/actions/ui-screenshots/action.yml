@@ -4,6 +4,10 @@ description: >
   a PR adds or changes, pick a simulator, and publish the screenshots those
   tests attach. Used by ios-ci.yml's ui-screenshots job.
 
+  Deprecated: kept for callers pinned to 4.2.0 or earlier. The workflows now
+  check out scripts/ios/ui-screenshots.sh at their own commit and run it from there.
+  Removed in the next major version.
+
 runs:
   using: composite
   steps:

@@ -23,6 +23,25 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ios-ci**, **ota-refresh**, **swift-package-ci**: run the `stale-comments`,
+  `build-expiry`, `ui-screenshots` and `cli-examples` scripts at the commit of
+  the workflow, not at `main`. They are now in `scripts/` (`pr/`, `staging/`,
+  `ios/` and `swift-package/`), and each job checks them out at
+  `job.workflow_sha`. Before, the jobs used them through composite actions
+  pinned to `@main`, so a caller pinned to a tag ran an older workflow with the
+  newest scripts, and a change to a script's interface on `main` could break
+  it. No caller change.
+
+### Deprecated
+
+- The `stale-comments`, `build-expiry`, `ui-screenshots` and `cli-examples`
+  composite actions in `.github/actions/`. Workflows of 4.2.0 and earlier use
+  them at `@main`, so they stay, and run the scripts in `scripts/`. They go in
+  the next major version: move a pin of 4.2.0 or earlier to this release before
+  then.
+
 ## [4.2.0] 2026-10-18
 
 ### Added
