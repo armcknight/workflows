@@ -23,6 +23,14 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Fixed
+
+- **swiftpm-cask-release**: the README now names the signing inputs and secrets
+  the workflow reads — `match-git-url`, `team-id`, `bundle-id`,
+  `MATCH_PASSWORD` and `MATCH_DEPLOY_KEY` — in place of
+  `DEVELOPER_ID_P12_BASE64` and `DEVELOPER_ID_P12_PASSWORD`, and lists the
+  `submodules` input. Docs only; the workflow does not change.
+
 ## [4.2.0] 2026-10-18
 
 ### Added

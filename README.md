@@ -244,13 +244,18 @@ docker run --rm -v "$PWD":/src -v path/to/workflows/scripts:/scripts -w /src \
 | `version-regex` | no (none) | `sed -E` expression with one capture group that reads the version out of `version-file`. Needed when `version-file` is set. |
 | `tap-repo` | no (`armcknight/homebrew-tools`) | Tap that hosts the cask and the release asset. |
 | `sign` | no (`false`) | Developer ID sign and notarize each binary before packaging. |
+| `match-git-url` | with `sign` | SSH URL of the fastlane match repo holding the Developer ID Application cert. |
+| `team-id` | with `sign` | Apple Developer Portal team that owns that cert. |
+| `bundle-id` | with `sign` | Bundle id passed to `match` as `app_identifier`. Unused for the team-wide cert, but `match` validates the option even with `skip_provisioning_profiles` and fails without it. |
 | `runs-on` | no (`macos-15`) | Runner label. Must be macOS. |
+| `submodules` | no (none) | Passed to `actions/checkout`. Use `recursive` when the package's dependencies are vendored as git submodules. |
 
 Secrets: `TAP_RELEASE_TOKEN` is always required. With `sign: true`, so are
-`DEVELOPER_ID_P12_BASE64`, `DEVELOPER_ID_P12_PASSWORD`, `NOTARY_KEY`,
-`NOTARY_KEY_ID` and `NOTARY_ISSUER_ID` — GitHub cannot make a secret
-conditionally required, so the workflow names the missing one at run time rather
-than shipping an unsigned build.
+`MATCH_PASSWORD`, `MATCH_DEPLOY_KEY`, `NOTARY_KEY`, `NOTARY_KEY_ID` and
+`NOTARY_ISSUER_ID`. The certificate comes from the match repo (read only), as in
+`macos-cask-release.yml`, not from a `.p12` secret. GitHub cannot make an input
+or a secret conditionally required, so the workflow names the missing one at run
+time rather than shipping an unsigned build.
 
 A final tag (`1.2.3`) routes to `Casks/<cask-name>.rb`; a release candidate
 (`1.2.3-RC1`, as `prepare-release rc` names it) routes to
