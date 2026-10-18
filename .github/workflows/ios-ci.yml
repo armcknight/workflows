@@ -15,6 +15,11 @@ name: iOS CI (reusable)
 #   - caller grants permissions: contents: read, checks: write,
 #     pull-requests: write, id-token: write
 #
+# Set `working-directory` when the app is not at the repository root, such as
+# `ios` in a repository that also holds a server. Every step that runs in the
+# repository (bundler, Homebrew, arkana, xcodegen, fastlane, xcodebuild) runs
+# there, and the paths the workflow reads or writes are relative to it.
+#
 # Optional: set `ui-screenshots-scheme` and `ui-screenshots-path` to run the UI
 # tests a PR adds or changes on a simulator and comment their screenshots on the
 # PR. That job also needs the caller to grant contents: write, because it pushes
@@ -62,7 +67,7 @@ on:
         type: string
         default: ""
       ui-screenshots-path:
-        description: "Directory of the UI test sources. A test class in a Swift file the PR adds or changes there is run."
+        description: "Directory of the UI test sources, relative to `working-directory`. A test class in a Swift file the PR adds or changes there is run."
         required: false
         type: string
         default: ""
@@ -76,6 +81,11 @@ on:
         required: false
         type: string
         default: ""
+      working-directory:
+        description: "Directory of the app, relative to the repository root: its Gemfile, Brewfile, project spec and fastlane. Every repository step runs there."
+        required: false
+        type: string
+        default: "."
 
 env:
   # gym's `xcodebuild -showBuildSettings` can exceed the 3s default on projects
@@ -145,6 +155,9 @@ jobs:
       contents: read
       checks: write
       pull-requests: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -159,6 +172,7 @@ jobs:
       with:
         ruby-version: '3.3.0'
         bundler-cache: true
+        working-directory: ${{ inputs.working-directory }}
 
     - name: Install Homebrew dependencies
       run: |
@@ -199,7 +213,7 @@ jobs:
       uses: mikepenz/action-junit-report@v5
       if: always()
       with:
-        report_paths: "fastlane/test_output/junit.xml"
+        report_paths: "${{ inputs.working-directory }}/fastlane/test_output/junit.xml"
         check_name: "Test Results"
         fail_on_failure: true
         detailed_summary: true
@@ -209,7 +223,7 @@ jobs:
       if: always()
       with:
         name: test-results
-        path: fastlane/test_output
+        path: ${{ inputs.working-directory }}/fastlane/test_output
         retention-days: 7
 
   stage:
@@ -228,6 +242,9 @@ jobs:
     env:
       # Lifetime of both the assumed-role session and the presigned install link.
       LINK_TTL_SECONDS: "43200"
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
 
     steps:
     # Outside `pull_request` there is no head_ref, so look up the requested PR's
@@ -235,6 +252,8 @@ jobs:
     # branch and stage the wrong code, so fail instead of passing one on.
     - name: Resolve PR head branch
       id: pr
+      # Before the checkout, so the working directory does not exist yet.
+      working-directory: .
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
@@ -267,6 +286,7 @@ jobs:
       with:
         ruby-version: '3.3.0'
         bundler-cache: true
+        working-directory: ${{ inputs.working-directory }}
 
     - name: Install Homebrew dependencies
       run: |
@@ -376,6 +396,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -420,6 +443,7 @@ jobs:
       with:
         ruby-version: '3.3.0'
         bundler-cache: true
+        working-directory: ${{ inputs.working-directory }}
 
     - name: Install Homebrew dependencies
       if: steps.tests.outputs.only-testing != ''

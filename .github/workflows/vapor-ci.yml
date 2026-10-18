@@ -12,6 +12,10 @@ name: Vapor CI (reusable)
 #       with:
 #         swift-image: swift:6.0-noble
 #
+# Set `working-directory` when the package is not at the repository root, such
+# as `server` in a repository that also holds an app. `swift build`, `swift test`
+# and the Docker build run there.
+#
 # Keep `swift-image` in step with the Dockerfile's `FROM swift:` lines.
 #
 # The work is done by scripts/vapor/ in this repository, which run the same
@@ -55,10 +59,15 @@ on:
         type: boolean
         default: true
       dockerfile:
-        description: "The Dockerfile, relative to the repository root."
+        description: "The Dockerfile, relative to `working-directory`."
         required: false
         type: string
         default: "Dockerfile"
+      working-directory:
+        description: "Directory of the package, relative to the repository root. The builds, the tests and the Docker build (its context and its Dockerfile) run there."
+        required: false
+        type: string
+        default: "."
 
 permissions:
   contents: read
@@ -68,6 +77,9 @@ jobs:
     name: Build and test on Linux
     runs-on: ubuntu-latest
     container: ${{ inputs.swift-image }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -83,6 +95,7 @@ jobs:
           path: .armcknight-workflows
           sparse-checkout: scripts
       - name: Move the scripts out of the workspace
+        working-directory: .
         run: |
           mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
           echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
@@ -90,8 +103,8 @@ jobs:
       - name: Cache the dependencies and the build
         uses: actions/cache@v4
         with:
-          path: .build
-          key: vapor-ci-${{ inputs.swift-image }}-${{ hashFiles('Package.resolved') }}
+          path: ${{ inputs.working-directory }}/.build
+          key: vapor-ci-${{ inputs.swift-image }}-${{ hashFiles(format('{0}/Package.resolved', inputs.working-directory)) }}
           restore-keys: vapor-ci-${{ inputs.swift-image }}-
 
       - name: Build
@@ -112,6 +125,9 @@ jobs:
     name: Build the Docker image
     if: inputs.docker-build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -127,6 +143,7 @@ jobs:
           path: .armcknight-workflows
           sparse-checkout: scripts
       - name: Move the scripts out of the workspace
+        working-directory: .
         run: |
           mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
           echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"

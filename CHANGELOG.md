@@ -41,6 +41,13 @@ edit a caller applies.
   workflows check them out at their own commit. `make lint` and the `ci`
   workflow shellcheck them, and a change to them needs a changelog entry, as a
   change to `.github/` does.
+- **ios-ci**, **vapor-ci**, **fly-deploy**: an optional `working-directory`
+  input, default `.`, for a repository that keeps each component in its own
+  directory, such as `ios/` and `server/`. Every step that runs in the
+  repository runs there, and paths such as the IPA, the test report, the
+  Dockerfile and `fly.toml` are relative to it. In ios-ci,
+  `ui-screenshots-path` is relative to it too. The default keeps today's
+  behaviour.
 
 ## [4.1.0] 2026-10-16
 
