@@ -1,0 +1,172 @@
+name: Fly deploy (reusable)
+
+# Deploys a Fly app from the tip of the default branch, with its commit as the
+# GIT_SHA build argument, then waits until the health check answers with that
+# commit.
+#
+# A deploy is the owner's action, and agents never start one. `deploy-on`
+# says which events deploy:
+#
+# * `manual` (the default): only `workflow_dispatch`, a run the owner starts.
+# * `merge`: also each push to the default branch, which is a merge, and only
+#   the owner merges.
+#
+# The caller triggers on both, so that changing `deploy-on` is the only edit:
+#
+#   on:
+#     workflow_dispatch:
+#     push:
+#       branches: [main]
+#
+#   jobs:
+#     deploy:
+#       uses: armcknight/workflows/.github/workflows/fly-deploy.yml@4
+#       with:
+#         app: my-server
+#         health-check-path: /healthz
+#         deploy-on: manual
+#       secrets:
+#         FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+#
+# FLY_API_TOKEN is a deploy token for the one app: `fly tokens create deploy`.
+#
+# Like `make server deploy`, it refuses to deploy a commit that is not the tip
+# of the default branch, such as a run started from another branch, or a rerun
+# of an old push: `fly deploy` would put code on the server that is not on the
+# default branch.
+#
+# The work is done by scripts/fly/ in this repository, which run the same
+# outside GitHub Actions. This workflow only checks them out and calls them.
+# To deploy locally, from the server's checkout of the default branch:
+#
+#   export APP=my-server
+#   path/to/scripts/fly/check-tip.sh
+#   path/to/scripts/fly/deploy.sh
+#   path/to/scripts/fly/wait-for-health.sh
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: "The Fly app."
+        required: true
+        type: string
+      deploy-on:
+        description: "`manual`: deploy only on `workflow_dispatch`. `merge`: also on each push to the default branch."
+        required: false
+        type: string
+        default: "manual"
+      health-check-path:
+        description: "The path that answers 200, with the deployed commit in its body, when the server is ready."
+        required: false
+        type: string
+        default: "/healthz"
+      url:
+        description: "The server's URL, for the health check. Empty (the default) is `https://<app>.fly.dev`."
+        required: false
+        type: string
+        default: ""
+      require-sha:
+        description: "Wait until the health check's body has the deployed commit, not only a 200. Set `false` for a server whose health check does not return GIT_SHA yet."
+        required: false
+        type: boolean
+        default: true
+      health-timeout-seconds:
+        description: "How long to wait for the health check after the deploy."
+        required: false
+        type: number
+        default: 180
+      config:
+        description: "The Fly configuration file, relative to the repository root."
+        required: false
+        type: string
+        default: "fly.toml"
+    secrets:
+      FLY_API_TOKEN:
+        description: "A deploy token for the app."
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check-inputs:
+    name: Check the inputs
+    runs-on: ubuntu-latest
+    steps:
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
+      - name: Check deploy-on
+        env:
+          DEPLOY_ON: ${{ inputs.deploy-on }}
+        run: |
+          "$SCRIPTS/fly/check-deploy-on.sh"
+
+  deploy:
+    name: Deploy ${{ inputs.app }}
+    needs: check-inputs
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (inputs.deploy-on == 'merge' &&
+       github.event_name == 'push' &&
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    # One deploy of an app at a time. A deploy that has started is never
+    # cancelled: the next one waits.
+    concurrency:
+      group: fly-deploy-${{ inputs.app }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
+      - name: Refuse a commit that is not the tip of the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          "$SCRIPTS/fly/check-tip.sh"
+
+      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          APP: ${{ inputs.app }}
+          CONFIG: ${{ inputs.config }}
+        run: |
+          "$SCRIPTS/fly/deploy.sh"
+
+      - name: Wait for the health check
+        env:
+          APP: ${{ inputs.app }}
+          URL: ${{ inputs.url }}
+          HEALTH_PATH: ${{ inputs.health-check-path }}
+          REQUIRE_SHA: ${{ inputs.require-sha }}
+          TIMEOUT: ${{ inputs.health-timeout-seconds }}
+        run: |
+          "$SCRIPTS/fly/wait-for-health.sh"

@@ -1,0 +1,145 @@
+name: Vapor CI (reusable)
+
+# Reusable build + test for a Vapor server, on Linux in the swift image, the
+# same as the server runs on Fly. It also builds the server's Docker image, so a
+# change that breaks the image fails before a deploy. It is separate from
+# swift-package-ci.yml, which runs on macOS: on Linux, Foundation differs and
+# Darwin-only packages do not build.
+#
+#   jobs:
+#     ci:
+#       uses: armcknight/workflows/.github/workflows/vapor-ci.yml@4
+#       with:
+#         swift-image: swift:6.0-noble
+#
+# Keep `swift-image` in step with the Dockerfile's `FROM swift:` lines.
+#
+# The work is done by scripts/vapor/ in this repository, which run the same
+# outside GitHub Actions. This workflow only checks them out and calls them.
+
+on:
+  workflow_call:
+    inputs:
+      swift-image:
+        description: "The swift image the package builds and tests in, such as `swift:6.0-noble`. Use the Dockerfile's build image."
+        required: true
+        type: string
+      product:
+        description: "The executable product to build. Empty (the default) builds every product."
+        required: false
+        type: string
+        default: ""
+      build-args:
+        description: "Extra arguments appended to `swift build`."
+        required: false
+        type: string
+        default: ""
+      run-tests:
+        description: "Run `swift test` after the build. Set `false` for a package with no tests that build on Linux."
+        required: false
+        type: boolean
+        default: true
+      test-args:
+        description: "Extra arguments appended to `swift test`."
+        required: false
+        type: string
+        default: ""
+      submodules:
+        description: "Passed to actions/checkout. Use `recursive` when path-based SwiftPM dependencies are git submodules. Empty (the default) checks out no submodules."
+        required: false
+        type: string
+        default: ""
+      docker-build:
+        description: "Build the Docker image, without pushing it. Set `false` for a package with no Dockerfile."
+        required: false
+        type: boolean
+        default: true
+      dockerfile:
+        description: "The Dockerfile, relative to the repository root."
+        required: false
+        type: string
+        default: "Dockerfile"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test on Linux
+    runs-on: ubuntu-latest
+    container: ${{ inputs.swift-image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
+      - name: Cache the dependencies and the build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: vapor-ci-${{ inputs.swift-image }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: vapor-ci-${{ inputs.swift-image }}-
+
+      - name: Build
+        env:
+          PRODUCT: ${{ inputs.product }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          "$SCRIPTS/vapor/build.sh"
+
+      - name: Test
+        if: inputs.run-tests
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          "$SCRIPTS/vapor/test.sh"
+
+  docker:
+    name: Build the Docker image
+    if: inputs.docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      # The scripts in this repository, at the commit of this workflow. They go
+      # out of the workspace, so that they are not in the caller's checkout.
+      - name: Check out the scripts
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .armcknight-workflows
+          sparse-checkout: scripts
+      - name: Move the scripts out of the workspace
+        run: |
+          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Gives the build below the token for the GitHub Actions cache.
+      - uses: crazy-max/ghaction-github-runtime@v3
+
+      # Not pushed: Fly's builder makes the image that is deployed.
+      - name: Build the image
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          DOCKER_BUILD_ARGS: --cache-from type=gha --cache-to type=gha,mode=max
+        run: |
+          "$SCRIPTS/vapor/docker-build.sh"

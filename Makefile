@@ -13,6 +13,9 @@ ACTIONLINT_VERSION = 1.7.7
 # A genuine finding gets a `# shellcheck disable=` on the line, not an entry here.
 SHELLCHECK_OPTS = -e SC2016 -e SC2129 -e SC2015
 
+# The scripts the reusable workflows check out and run. Keep in step with ci.yml.
+SCRIPTS = scripts/lib.sh $(wildcard scripts/*/*.sh)
+
 .DEFAULT_GOAL = help
 
 
@@ -30,12 +33,14 @@ help:
 # MARK: - Linting
 
 # The same check ci.yml runs, so a failure shows up before the PR.
-## lint: run actionlint and shellcheck on the workflows in Docker, as CI does
+## lint: run actionlint and shellcheck on the workflows and scripts/ in Docker, as CI does
 .PHONY: lint
 lint:
 	docker run --rm -v "$(CURDIR)":/repo -w /repo \
 	  -e SHELLCHECK_OPTS="$(SHELLCHECK_OPTS)" \
 	  rhysd/actionlint:$(ACTIONLINT_VERSION) -color
+	docker run --rm -v "$(CURDIR)":/repo -w /repo --entrypoint shellcheck \
+	  rhysd/actionlint:$(ACTIONLINT_VERSION) $(SHELLCHECK_OPTS) -x $(SCRIPTS)
 
 
 # MARK: - Releasing

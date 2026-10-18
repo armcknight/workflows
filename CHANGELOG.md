@@ -23,6 +23,25 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **vapor-ci**: a new workflow for Vapor servers. It builds and tests the
+  package on Linux, in the swift image the server's Dockerfile builds in, and
+  builds the Docker image without pushing it. `swift-package-ci.yml` stays the
+  macOS build for packages.
+- **fly-deploy**: a new workflow that deploys a Fly app from the tip of the
+  default branch with `--build-arg GIT_SHA=<commit>`, then waits until the
+  health check answers with that commit. `deploy-on: manual` (the default)
+  deploys only on `workflow_dispatch`; `merge` also deploys on each push to the
+  default branch. It refuses a commit that is not the branch's tip. It needs the
+  `FLY_API_TOKEN` secret, a deploy token for the app.
+- **scripts/**: the shell scripts that `vapor-ci.yml` and `fly-deploy.yml`
+  run, in `scripts/vapor/` and `scripts/fly/`. They have no dependency on
+  GitHub Actions, so they also run locally or on a different CI provider. The
+  workflows check them out at their own commit. `make lint` and the `ci`
+  workflow shellcheck them, and a change to them needs a changelog entry, as a
+  change to `.github/` does.
+
 ## [4.1.0] 2026-10-16
 
 ### Added

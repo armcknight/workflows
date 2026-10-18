@@ -1,6 +1,6 @@
 # armcknight/workflows
 
-Reusable GitHub Actions workflows shared across armcknight repos. Four areas:
+Reusable GitHub Actions workflows shared across armcknight repos. Five areas:
 
 - **staging OTA** (iOS) — on every PR, run tests. On a `/build-staging`
   comment, build an ad-hoc IPA and publish a presigned [`itms-services`](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices)
@@ -8,6 +8,8 @@ Reusable GitHub Actions workflows shared across armcknight repos. Four areas:
 - **macOS cask release** — on a version tag, build, sign, and notarize a macOS
   app, then publish it through the `armcknight/homebrew-tools` Homebrew tap.
 - **SwiftPM package CI** — `swift build` and `swift test` on every PR.
+- **Vapor server on Fly.io** — build and test on Linux and build the Docker
+  image on every PR, and deploy to Fly by hand or on a merge.
 - **Claude Code plugin** — validate the plugin and marketplace manifests on every
   PR, and cut the release on a version tag.
 
@@ -35,6 +37,8 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
 | `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package, and the optional `cli-examples` job beside them, which runs the commands the PR description names on the base branch and on the PR and comments the change in their output. |
+| `vapor-ci.yml` | `pull_request` | `swift build` and `swift test` for a Vapor server on Linux, in the swift image the Dockerfile builds in, and a build of the Docker image, not pushed. Separate from `swift-package-ci.yml`, which runs on macOS. |
+| `fly-deploy.yml` | `workflow_dispatch`, and `push` to the default branch | Deploy the default branch's tip to Fly with `--build-arg GIT_SHA=<commit>`, then wait until the health check answers with that commit. `deploy-on: manual` deploys only on `workflow_dispatch`; `merge` also on each push to the default branch. Refuses a commit that is not the branch's tip. |
 | `swiftpm-cask-release.yml` | `push` of a version tag | Build a SwiftPM CLI, optionally sign + notarize it, attach the tarball to a release on the tap repo, bump the cask. |
 | `claude-plugin-ci.yml` | `pull_request` | Validate a Claude Code plugin manifest and its marketplace manifest. |
 | `claude-plugin-release.yml` | `push` of a version tag | Validate both manifests, refuse a tag that disagrees with the plugin version, create the GitHub release. |
@@ -166,6 +170,66 @@ The job reads the description of the event that started the run, so an edit to
 the description takes effect on the next push. To comment, the caller must
 grant `pull-requests: write`. Without it, or on a PR from a fork, the job puts
 the output in its summary and gives a warning.
+
+`vapor-ci.yml`:
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `swift-image` | yes | The swift image to build and test in, such as `swift:6.0-noble`. Keep it the same as the Dockerfile's build image. |
+| `product` | no (every product) | The executable product to build. |
+| `build-args` | no (none) | Appended to `swift build`. |
+| `run-tests` | no (`true`) | Run `swift test` after the build. |
+| `test-args` | no (none) | Appended to `swift test`. |
+| `submodules` | no (none) | Passed to `actions/checkout`. |
+| `docker-build` | no (`true`) | Build the Docker image, without pushing it. |
+| `dockerfile` | no (`Dockerfile`) | The Dockerfile, relative to the repository root. |
+
+`fly-deploy.yml`:
+
+| Input | Required | Description |
+|-------|----------|-------------|
+| `app` | yes | The Fly app. |
+| `deploy-on` | no (`manual`) | `manual`: deploy only on `workflow_dispatch`. `merge`: also on each push to the default branch. Any other value fails the run. |
+| `health-check-path` | no (`/healthz`) | The path that answers 200, with the deployed commit in its body, when the server is ready. |
+| `url` | no (`https://<app>.fly.dev`) | The server's URL, for the health check. |
+| `require-sha` | no (`true`) | Wait for the commit in the health check's body, not only a 200. |
+| `health-timeout-seconds` | no (`180`) | How long to wait for the health check. |
+| `config` | no (`fly.toml`) | The Fly configuration file. |
+
+Secret: `FLY_API_TOKEN`, a deploy token for the one app (`fly tokens create
+deploy --app <app>`), passed explicitly. The server's own secrets, such as
+`DATABASE_URL`, are Fly secrets, not GitHub secrets, and this workflow never
+reads them.
+
+A deploy is the owner's action. The caller triggers on both `workflow_dispatch`
+and `push` to the default branch, so that `deploy-on` is the only edit between
+the two ways; under `manual` the push run's deploy job is skipped. Deploys of an
+app run one at a time, and a started deploy is never cancelled. As
+`fly deploy` puts the checkout on the server, the job refuses a commit that is
+not the tip of the default branch: a run started from another branch, or a
+rerun of an old push.
+
+Both workflows only check out and call the scripts in [`scripts/`](scripts),
+which do the work. The scripts take their inputs as environment variables, have
+no dependency on GitHub Actions, and each one documents its variables at the
+top, so you can run them locally or from a different CI provider. The workflows
+check them out at the commit of the workflow (`job.workflow_sha`), so a caller
+that pins `@4` also gets the `@4` scripts. To deploy by hand, from the server's
+checkout of the default branch:
+
+```sh
+export APP=my-server
+path/to/workflows/scripts/fly/check-tip.sh
+path/to/workflows/scripts/fly/deploy.sh
+path/to/workflows/scripts/fly/wait-for-health.sh
+```
+
+To build and test on Linux as `vapor-ci.yml` does:
+
+```sh
+docker run --rm -v "$PWD":/src -v path/to/workflows/scripts:/scripts -w /src \
+  swift:6.0-noble sh -c '/scripts/vapor/build.sh && /scripts/vapor/test.sh'
+```
 
 `swiftpm-cask-release.yml`:
 
@@ -503,6 +567,42 @@ jobs:
       app-identifier: com.example.MyApp
       arkana-keys: SentryDSN
     secrets: inherit
+```
+
+`.github/workflows/ci.yml` and `.github/workflows/deploy.yml` for a Vapor server on Fly:
+
+```yaml
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ci:
+    uses: armcknight/workflows/.github/workflows/vapor-ci.yml@4
+    with:
+      swift-image: swift:6.0-noble
+```
+
+```yaml
+name: Deploy
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  deploy:
+    uses: armcknight/workflows/.github/workflows/fly-deploy.yml@4
+    with:
+      app: my-server
+      health-check-path: /healthz
+      deploy-on: manual   # or merge
+    secrets:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 ```
 
 ## Notes
