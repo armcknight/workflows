@@ -23,6 +23,13 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Fixed
+
+- **claude-plugin-ci, claude-plugin-release**: pass `plugin-path`,
+  `marketplace-path` and `changelog` to `run:` steps through `env:`, not as
+  inline `${{ inputs.* }}` expressions. Before, a value with a quote or `$(` in
+  it ran as shell.
+
 ## [4.2.0] 2026-10-18
 
 ### Added

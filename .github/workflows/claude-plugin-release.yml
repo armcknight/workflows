@@ -79,18 +79,24 @@ jobs:
       # at runtime, silently, with empty metadata — so this is the only place
       # that failure is visible.
       - name: Validate plugin manifest
-        run: claude plugin validate "${{ inputs.plugin-path }}"
+        env:
+          PLUGIN_PATH: ${{ inputs.plugin-path }}
+        run: claude plugin validate "$PLUGIN_PATH"
 
       - name: Validate marketplace manifest
-        run: claude plugin validate "${{ inputs.marketplace-path }}"
+        env:
+          MARKETPLACE_PATH: ${{ inputs.marketplace-path }}
+        run: claude plugin validate "$MARKETPLACE_PATH"
 
       # The tag is the release's name, but the manifest version is what users
       # actually receive. If they disagree, the release is a no-op for everyone.
       - name: Check tag matches the manifest version
+        env:
+          PLUGIN_PATH: ${{ inputs.plugin-path }}
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          MANIFEST="${{ inputs.plugin-path }}/.claude-plugin/plugin.json"
+          MANIFEST="$PLUGIN_PATH/.claude-plugin/plugin.json"
           VERSION=$(jq -r .version "$MANIFEST")
           # An RC tag like 0.1.1-RC1 should match the manifest's base 0.1.1.
           BASE="${TAG%%-*}"
@@ -110,8 +116,9 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          CHANGELOG: ${{ inputs.changelog }}
         run: |
           set -euo pipefail
           prepare-github-release "${GITHUB_REF_NAME}" \
-            --changelog "${{ inputs.changelog }}" \
+            --changelog "$CHANGELOG" \
             ${{ inputs.prerelease && '--prerelease' || '' }}
