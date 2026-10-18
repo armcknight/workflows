@@ -300,6 +300,41 @@ jobs:
       assets: Spoons/*.spoon.zip
 ```
 
+## Running the steps outside Actions
+
+Every workflow here works as `vapor-ci.yml` and `fly-deploy.yml` do: the work
+is in the scripts in [`scripts/`](scripts), and a step only sets their
+environment variables and calls them. The scripts have no dependency on GitHub
+Actions, and each one names the variables it reads at the top, so the same
+operation runs on a workstation or on a different CI provider. A script that
+gives a value back prints it on stdout, and the workflow writes it to
+`$GITHUB_OUTPUT`. The workflows check the scripts out at the commit of the
+workflow (`job.workflow_sha`), so a caller that pins `@4` also gets the `@4`
+scripts. Each job does this with one step, the
+[`scripts`](.github/actions/scripts/action.yml) composite action, which puts
+the path in `$SCRIPTS`.
+
+| Directory | Scripts | Used by |
+|-----------|---------|---------|
+| `scripts/staging/` | `authorize.sh`, `check-commenter.sh`, `pr-state.sh`, `pr-head-ref.sh`, `publish.sh`, `refresh.sh`, `build-expiry.sh`, `cleanup.sh` | `ios-ci.yml`, `ota-refresh.yml`, `ota-cleanup.yml` |
+| `scripts/pr/` | `stale-comments.sh` | `ios-ci.yml`, `ota-refresh.yml`, `swift-package-ci.yml` |
+| `scripts/ios/` | `ui-screenshots.sh` | `ios-ci.yml` |
+| `scripts/swift-package/` | `cli-examples.sh` | `swift-package-ci.yml` |
+| `scripts/xcode/` | `prepare-env.sh`, `stamp-marketing-version.sh`, `export-app.sh` | `ios-ci.yml`, `macos-cask-release.yml` |
+| `scripts/signing/` | `install-match-key.sh`, `match-signing-identity.sh`, `sign-binaries.sh`, `notarize.sh` | `ios-ci.yml`, `macos-cask-release.yml`, `swiftpm-cask-release.yml` |
+| `scripts/release/` | `release-version.sh`, `source-version.sh`, `check-tag-version.sh`, `check-binaries.sh`, `cask-path.sh`, `bump-cask.sh`, `publish-github-release.sh` | `macos-cask-release.yml`, `swiftpm-cask-release.yml`, `github-release.yml`, `claude-plugin-release.yml` |
+
+For example, to re-sign a PR's staging link by hand:
+
+```sh
+export S3_BUCKET=my-bucket AWS_REGION=us-east-1 PROJECT=my-app PR_NUMBER=42 GH_REPO=me/my-app
+scripts/staging/refresh.sh
+```
+
+`install-match-key.sh` and `match-signing-identity.sh` change the machine they
+run on (`~/.ssh/id_ed25519`, the keychain search list), so they are for a CI
+machine, not a workstation.
+
 ## Versioning and pinning
 
 Every workflow here is versioned together under one tag, with semver applied to
@@ -351,8 +386,9 @@ the changelog section and moves the major alias. It refuses a tag that is not on
 `main`, and it leaves the alias alone when you cut a patch on an older line, so
 the alias never moves backwards.
 
-`make lint` runs the same actionlint check `ci.yml` runs, so a lint failure shows
-up before the PR.
+`make lint` runs the same checks `ci.yml` runs — actionlint on the workflows,
+and shellcheck on `scripts/` and the scripts in `.github/actions/` — so a lint
+failure shows up before the PR.
 
 `make` (or `make help`) lists every target with a one-line description.
 

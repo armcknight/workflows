@@ -65,17 +65,22 @@ jobs:
       LINK_TTL_SECONDS: "43200"
 
     steps:
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
     # This job assumes the AWS role and mints a presigned link to the build, so
     # a commenter who cannot write to the repo must not get an install link.
     - name: Check that the commenter can write to the repo
       if: github.event_name == 'issue_comment'
       env:
         ASSOCIATION: ${{ github.event.comment.author_association }}
+        ACTION: refresh
       run: |
-        case "$ASSOCIATION" in
-          OWNER|MEMBER|COLLABORATOR) echo "Commenter is $ASSOCIATION; continuing." ;;
-          *) echo "Commenter is $ASSOCIATION, which cannot write to this repo. Refusing to refresh." >&2; exit 1 ;;
-        esac
+        "$SCRIPTS/staging/check-commenter.sh"
 
     - name: Acknowledge command
       if: inputs.comment-id != ''
@@ -96,22 +101,6 @@ jobs:
     - name: Install ota-publish
       run: brew install armcknight/tools/tools
 
-    # The scripts in this repository, at the commit of this workflow. They go
-    # out of the workspace, so that they are not in the caller's checkout. This
-    # repository is public, so the job needs no `contents` permission for it.
-    - name: Check out the scripts
-      uses: actions/checkout@v5
-      with:
-        repository: ${{ job.workflow_repository }}
-        ref: ${{ job.workflow_sha }}
-        path: .armcknight-workflows
-        sparse-checkout: scripts
-    - name: Move the scripts out of the workspace
-      working-directory: .
-      run: |
-        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
-
     - name: Re-sign OTA link and comment on PR
       id: refresh
       env:
@@ -123,107 +112,17 @@ jobs:
         S3_BUCKET: ${{ vars.S3_BUCKET }}
         AWS_REGION: ${{ vars.AWS_REGION }}
         PR_NUMBER: ${{ inputs.pr-number }}
-        RUN_ID_INPUT: ${{ inputs.run-id }}
+        RUN_ID: ${{ inputs.run-id }}
         REBUILD_EXPIRED: ${{ inputs.rebuild-expired }}
         RETENTION_DAYS: ${{ inputs.retention-days }}
+        PROJECT: ${{ github.event.repository.name }}
       run: |
-        PROJECT="${GITHUB_REPOSITORY##*/}"
-        PREFIX="s3://$S3_BUCKET/$PROJECT/pr-$PR_NUMBER/"
-        RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
-        # The PR's comments that a refresh makes stale, this run's own
-        # `/refresh-staging` command included. Read before posting anything, so a
-        # comment this run posts is never among them.
-        "$SCRIPTS/pr/stale-comments.sh" collect "$PR_NUMBER" /tmp/stale-comments.jsonl
-
-        # Explain on the PR why there is no link, then fail the check.
-        fail_missing_build() {
-          echo "::error::$1"
-          printf '%s\n\nStaging builds are probably deleted %s days after they are made, by the lifecycle rule on the staging bucket. A refresh only re-signs a build that exists, so it cannot make a new one.\n\nTo get a new staging build, comment `/build-staging` on this PR. Do not close and reopen the PR: closing it deletes all of its staging builds.\n' \
-            "$1" "$RETENTION_DAYS" > /tmp/pr-comment.md
-          gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md || true
-          # The commands are answered, and this notice replaces earlier ones.
-          # Keep the old links visible: with an explicit run-id, another build
-          # of the PR can still be there.
-          "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl command notice
-          exit 1
-        }
-
-        # A run's build is there only while its metadata.json is. ota-publish
-        # uploads it with the IPA, once, so the lifecycle rule deletes them
-        # together; a refresh uploads manifest.plist and install.html again, so
-        # the run's prefix can outlive the build. `aws s3 ls` exits non-zero when
-        # nothing has the key.
-        build_exists() {
-          aws s3 ls "${PREFIX}run-$1/metadata.json" > /dev/null
-        }
-
-        RUN_ID="$RUN_ID_INPUT"
-        if [ -n "$RUN_ID" ]; then
-          if ! build_exists "$RUN_ID"; then
-            fail_missing_build "The staging build for run $RUN_ID of PR #$PR_NUMBER is not available."
-          fi
-        else
-          RUN_ID=$(aws s3 ls "$PREFIX" \
-            | awk '{print $2}' | grep '^run-' | sed 's#run-##; s#/##' | sort -V | tail -1)
-          # Every older run is older still, so when the newest build is gone,
-          # all of them are.
-          if [ -n "$RUN_ID" ] && ! build_exists "$RUN_ID"; then
-            RUN_ID=""
-          fi
+        # refresh.sh exits 10 when the build expired and the caller should
+        # rebuild it.
+        STATUS=0
+        "$SCRIPTS/staging/refresh.sh" || STATUS=$?
+        if [ "$STATUS" -eq 10 ]; then
+          echo "rebuild=true" >> "$GITHUB_OUTPUT"
+          STATUS=0
         fi
-
-        if [ -z "$RUN_ID" ]; then
-          # The newest "Staging build ready" comment dates the newest build. A
-          # refresh does not upload the IPA or metadata.json again, so it does not
-          # reset the build's age.
-          LAST_STAGED=$(jq -rs 'map(select(.kind == "staged")) | last | .createdAt // empty' /tmp/stale-comments.jsonl)
-          AGE_DAYS=-1
-          if [ -n "$LAST_STAGED" ]; then
-            AGE_DAYS=$(jq -rn --arg t "$LAST_STAGED" '(now - ($t | fromdateiso8601)) / 86400 | floor')
-          fi
-
-          if [ "$AGE_DAYS" -ge "$RETENTION_DAYS" ] && [ "$REBUILD_EXPIRED" = "true" ]; then
-            # Only rebuild an open PR from a branch in this repo: closing a PR
-            # deletes its builds on purpose, and a fork's code must not run with
-            # this repo's secrets.
-            PR_STATE=$(gh pr view "$PR_NUMBER" --json state,isCrossRepository \
-              --jq 'if .isCrossRepository then "FORK" else .state end')
-            if [ "$PR_STATE" = "OPEN" ]; then
-              printf 'The staging build for this PR expired: it was made %s days ago, and the staging bucket deletes builds after %s days.\n\nMaking a new staging build now ([run](%s)). Its install link will be posted here when the Stage job finishes.\n' \
-                "$AGE_DAYS" "$RETENTION_DAYS" "$RUN_URL" > /tmp/pr-comment.md
-              gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-              "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl staged refreshed notice command
-              echo "rebuild=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "PR #$PR_NUMBER is $PR_STATE; not rebuilding."
-          fi
-
-          if [ "$AGE_DAYS" -ge 0 ]; then
-            fail_missing_build "The staging build for PR #$PR_NUMBER is not available. The newest one was made $AGE_DAYS days ago."
-          fi
-          fail_missing_build "No staging build was found for PR #$PR_NUMBER."
-        fi
-
-        RESULT=$(ota-publish \
-          --mode refresh \
-          --bucket "$S3_BUCKET" \
-          --region "$AWS_REGION" \
-          --project "$PROJECT" \
-          --pr "$PR_NUMBER" \
-          --run-id "$RUN_ID" \
-          --ttl "$LINK_TTL_SECONDS")
-        LANDING=$(echo "$RESULT" | jq -r '.landingUrl')
-        EXPIRES=$(echo "$RESULT" | jq -r '.expiresAt')
-        BUILD_EXPIRES=$("$SCRIPTS/staging/build-expiry.sh" "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
-
-        printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
-          "$RUN_ID" "$LANDING" "$EXPIRES" > /tmp/pr-comment.md
-        if [ -n "$BUILD_EXPIRES" ]; then
-          printf '\n_The build itself is deleted %s, by the lifecycle rule on the staging bucket._\n' \
-            "$BUILD_EXPIRES" >> /tmp/pr-comment.md
-        fi
-
-        gh pr comment "$PR_NUMBER" --body-file /tmp/pr-comment.md
-        "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl staged refreshed notice command
+        exit "$STATUS"

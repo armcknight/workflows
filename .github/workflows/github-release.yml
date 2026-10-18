@@ -82,6 +82,13 @@ jobs:
           # needs the tag's history to resolve it.
           fetch-depth: 0
 
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+      - name: Check out the scripts
+        uses: armcknight/workflows/.github/actions/scripts@main
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+
       - name: Install armcknight/tools
         run: |
           set -euo pipefail
@@ -92,22 +99,11 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-          FORCE_PRERELEASE: ${{ inputs.prerelease }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ inputs.prerelease }}
           CHANGELOG: ${{ inputs.changelog }}
         run: |
-          set -euo pipefail
-
-          # Two full calls rather than an array of arguments: macOS still
-          # resolves `bash` to 3.2, where expanding an empty array under `set -u`
-          # aborts the script — which would break every final release.
-          case "$GITHUB_REF_NAME:$FORCE_PRERELEASE" in
-            *-*|*:true)
-              prepare-github-release "$GITHUB_REF_NAME" --changelog "$CHANGELOG" --prerelease
-              ;;
-            *)
-              prepare-github-release "$GITHUB_REF_NAME" --changelog "$CHANGELOG"
-              ;;
-          esac
+          "$SCRIPTS/release/publish-github-release.sh"
 
       # Skipped entirely when `assets` is empty, so a caller with nothing to
       # attach needs no extra configuration.

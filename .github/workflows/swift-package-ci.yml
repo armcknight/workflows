@@ -71,20 +71,12 @@ jobs:
           # The default merge commit and its first parent, the base branch.
           fetch-depth: 2
 
-      # The scripts in this repository, at the commit of this workflow. They go
-      # out of the workspace, so that they are not in the caller's checkout.
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
       - name: Check out the scripts
-        uses: actions/checkout@v5
+        uses: armcknight/workflows/.github/actions/scripts@main
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: .armcknight-workflows
-          sparse-checkout: scripts
-      - name: Move the scripts out of the workspace
-        working-directory: .
-        run: |
-          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
       - name: Read the commands from the PR description
         id: commands
@@ -108,9 +100,7 @@ jobs:
           BUILD_ARGS: ${{ inputs.build-args }}
         run: |
           # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-          swift build --product "$PRODUCT" $BUILD_ARGS
-          # shellcheck disable=SC2086
-          BIN="$(swift build --show-bin-path $BUILD_ARGS)/$PRODUCT"
+          BIN=$("$SCRIPTS/swift-package/cli-examples.sh" build "$PRODUCT" "$PWD" $BUILD_ARGS)
           "$SCRIPTS/swift-package/cli-examples.sh" run "$BIN" "$PWD" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/head"
 
       - name: Build and run on the base branch
@@ -126,13 +116,10 @@ jobs:
           if [ -n "$SUBMODULES" ]; then
             git -C "$SRC" submodule update --init --recursive
           fi
-          cd "$SRC"
           # A new product, or a base that does not build, is not a failure:
           # the comment then shows only this PR's output.
           # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-          if swift build --product "$PRODUCT" $BUILD_ARGS; then
-            # shellcheck disable=SC2086
-            BIN="$(swift build --show-bin-path $BUILD_ARGS)/$PRODUCT"
+          if BIN=$("$SCRIPTS/swift-package/cli-examples.sh" build "$PRODUCT" "$SRC" $BUILD_ARGS); then
             "$SCRIPTS/swift-package/cli-examples.sh" run "$BIN" "$SRC" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/base"
             echo "out=$RUNNER_TEMP/base" >> "$GITHUB_OUTPUT"
           else

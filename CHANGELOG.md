@@ -23,13 +23,41 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Changed
+
+- **ios-ci**, **ota-refresh**, **ota-cleanup**, **macos-cask-release**,
+  **swiftpm-cask-release**, **github-release**, **claude-plugin-release**: the
+  work their steps did in `run:` blocks is now in the scripts in
+  `scripts/staging/`, `scripts/xcode/`, `scripts/signing/` and
+  `scripts/release/`, as for vapor-ci and fly-deploy. The steps check the
+  scripts out at the workflow's commit and only set their variables, so the
+  same operations run on a workstation or on a different CI provider. Every
+  reusable workflow, vapor-ci and fly-deploy too, checks the scripts out with
+  one step, the new `scripts` composite action. No caller change is needed.
+  The changes in behavior:
+  - **ios-ci**: the Stage job fails with a named error when `MATCH_DEPLOY_KEY`
+    is empty, in place of a later match failure.
+  - **macos-cask-release**: the cask bump authenticates its push with a
+    credential helper, as swiftpm-cask-release does, so the tap token is no
+    longer written into the clone's `.git/config`.
+  - **swiftpm-cask-release**: with `sign: true`, the release fails when the
+    certificate match fetches belongs to a team other than `team-id`, as
+    macos-cask-release already does.
+- **ios-ci**, **swift-package-ci**: `scripts/ios/ui-screenshots.sh` has a
+  `run` subcommand and `scripts/swift-package/cli-examples.sh` a `build`
+  subcommand, for the steps that ran the UI tests and built the product
+  inline.
+- **ci**: `make lint` and the `ci` workflow also shellcheck the scripts in
+  `.github/actions/`.
+
 ### Fixed
 
 - **ios-ci**, **ota-refresh**, **swift-package-ci**: run the `stale-comments`,
   `build-expiry`, `ui-screenshots` and `cli-examples` scripts at the commit of
   the workflow, not at `main`. They are now in `scripts/` (`pr/`, `staging/`,
   `ios/` and `swift-package/`), and each job checks them out at
-  `job.workflow_sha`. Before, the jobs used them through composite actions
+  `job.workflow_sha`; `scripts/staging/publish.sh` and `refresh.sh` call them
+  there, not on `PATH`. Before, the jobs used them through composite actions
   pinned to `@main`, so a caller pinned to a tag ran an older workflow with the
   newest scripts, and a change to a script's interface on `main` could break
   it. No caller change.

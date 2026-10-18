@@ -15,6 +15,13 @@ jobs:
       id-token: write
 
     steps:
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
     - name: Configure AWS credentials (OIDC)
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -25,8 +32,6 @@ jobs:
       env:
         S3_BUCKET: ${{ vars.S3_BUCKET }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
+        PROJECT: ${{ github.event.repository.name }}
       run: |
-        PROJECT="${GITHUB_REPOSITORY##*/}"
-        PREFIX="$PROJECT/pr-$PR_NUMBER/"
-        echo "Removing s3://$S3_BUCKET/$PREFIX"
-        aws s3 rm "s3://$S3_BUCKET/$PREFIX" --recursive
+        "$SCRIPTS/staging/cleanup.sh"
