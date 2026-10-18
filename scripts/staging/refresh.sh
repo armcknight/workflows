@@ -26,8 +26,7 @@
 #   GH_REPO           owner/name.
 #
 # Needs AWS credentials that can read the bucket and that last as long as the
-# link, and ota-publish (armcknight/tools), build-expiry and stale-comments
-# (.github/actions/) on PATH.
+# link, and ota-publish (armcknight/tools) on PATH.
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib.sh
 . "$(dirname "$0")/../lib.sh"
@@ -49,7 +48,7 @@ trap 'rm -rf "$tmp"' EXIT
 # The PR's comments that a refresh makes stale, this run's own
 # `/refresh-staging` command included. Read before posting anything, so a
 # comment this run posts is never among them.
-stale-comments collect "$PR_NUMBER" "$tmp/stale-comments.jsonl"
+"$here/../pr/stale-comments.sh" collect "$PR_NUMBER" "$tmp/stale-comments.jsonl"
 
 # Explains on the PR why there is no link, then fails.
 fail_missing_build() {
@@ -60,7 +59,7 @@ fail_missing_build() {
   # The commands are answered, and this notice replaces earlier ones. Keep the
   # old links visible: with an explicit RUN_ID, another build of the PR can
   # still be there.
-  stale-comments hide "$tmp/stale-comments.jsonl" command notice
+  "$here/../pr/stale-comments.sh" hide "$tmp/stale-comments.jsonl" command notice
   exit 1
 }
 
@@ -105,7 +104,7 @@ if [ -z "$RUN_ID" ]; then
       printf 'The staging build for this PR expired: it was made %s days ago, and the staging bucket deletes builds after %s days.\n\nMaking a new staging build now ([run](%s)). Its install link will be posted here when the Stage job finishes.\n' \
         "$age_days" "$RETENTION_DAYS" "$RUN_URL" > "$tmp/comment.md"
       gh pr comment "$PR_NUMBER" --body-file "$tmp/comment.md"
-      stale-comments hide "$tmp/stale-comments.jsonl" staged refreshed notice command
+      "$here/../pr/stale-comments.sh" hide "$tmp/stale-comments.jsonl" staged refreshed notice command
       exit 10
     fi
     echo "PR #$PR_NUMBER is $state; not rebuilding."
@@ -127,7 +126,7 @@ result=$(ota-publish \
   --ttl "$LINK_TTL_SECONDS")
 landing=$(printf '%s' "$result" | jq -r '.landingUrl')
 expires=$(printf '%s' "$result" | jq -r '.expiresAt')
-build_expires=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
+build_expires=$("$here/build-expiry.sh" "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
 
 printf 'Refreshed staging install link (run `%s`).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` again for another._\n' \
   "$RUN_ID" "$landing" "$expires" > "$tmp/comment.md"
@@ -137,4 +136,4 @@ if [ -n "$build_expires" ]; then
 fi
 
 gh pr comment "$PR_NUMBER" --body-file "$tmp/comment.md"
-stale-comments hide "$tmp/stale-comments.jsonl" staged refreshed notice command
+"$here/../pr/stale-comments.sh" hide "$tmp/stale-comments.jsonl" staged refreshed notice command

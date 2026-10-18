@@ -71,13 +71,12 @@ jobs:
           # The default merge commit and its first parent, the base branch.
           fetch-depth: 2
 
-      # Pinned to main: a reusable workflow cannot refer to an action at its own
-      # ref.
-      - name: Set up cli-examples
-        uses: armcknight/workflows/.github/actions/cli-examples@main
-
-      - name: Set up stale-comments
-        uses: armcknight/workflows/.github/actions/stale-comments@main
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+      - name: Check out the scripts
+        uses: armcknight/workflows/.github/actions/scripts@main
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
 
       - name: Read the commands from the PR description
         id: commands
@@ -87,7 +86,7 @@ jobs:
           # inlined into the script: anyone who can edit the PR writes it.
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          cli-examples commands "$PRODUCT" > "$RUNNER_TEMP/commands.jsonl"
+          "$SCRIPTS/swift-package/cli-examples.sh" commands "$PRODUCT" > "$RUNNER_TEMP/commands.jsonl"
           COUNT=$(wc -l < "$RUNNER_TEMP/commands.jsonl" | tr -d ' ')
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -eq 0 ]; then
@@ -101,8 +100,8 @@ jobs:
           BUILD_ARGS: ${{ inputs.build-args }}
         run: |
           # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-          BIN=$(cli-examples build "$PRODUCT" "$PWD" $BUILD_ARGS)
-          cli-examples run "$BIN" "$PWD" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/head"
+          BIN=$("$SCRIPTS/swift-package/cli-examples.sh" build "$PRODUCT" "$PWD" $BUILD_ARGS)
+          "$SCRIPTS/swift-package/cli-examples.sh" run "$BIN" "$PWD" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/head"
 
       - name: Build and run on the base branch
         id: base
@@ -120,8 +119,8 @@ jobs:
           # A new product, or a base that does not build, is not a failure:
           # the comment then shows only this PR's output.
           # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
-          if BIN=$(cli-examples build "$PRODUCT" "$SRC" $BUILD_ARGS); then
-            cli-examples run "$BIN" "$SRC" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/base"
+          if BIN=$("$SCRIPTS/swift-package/cli-examples.sh" build "$PRODUCT" "$SRC" $BUILD_ARGS); then
+            "$SCRIPTS/swift-package/cli-examples.sh" run "$BIN" "$SRC" "$RUNNER_TEMP/commands.jsonl" "$RUNNER_TEMP/base"
             echo "out=$RUNNER_TEMP/base" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::The base branch did not build $PRODUCT; the comment shows only this PR's output."
@@ -135,12 +134,12 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
           BASE_OUT: ${{ steps.base.outputs.out }}
         run: |
-          cli-examples report "$RUNNER_TEMP/commands.jsonl" "$BASE_OUT" "$RUNNER_TEMP/head" "$SHA" "$RUNNER_TEMP/cli-examples.md"
+          "$SCRIPTS/swift-package/cli-examples.sh" report "$RUNNER_TEMP/commands.jsonl" "$BASE_OUT" "$RUNNER_TEMP/head" "$SHA" "$RUNNER_TEMP/cli-examples.md"
           cat "$RUNNER_TEMP/cli-examples.md" >> "$GITHUB_STEP_SUMMARY"
           # Only the newest output stays visible.
-          stale-comments collect "$PR_NUMBER" "$RUNNER_TEMP/stale-comments.jsonl"
+          "$SCRIPTS/pr/stale-comments.sh" collect "$PR_NUMBER" "$RUNNER_TEMP/stale-comments.jsonl"
           if gh pr comment "$PR_NUMBER" --body-file "$RUNNER_TEMP/cli-examples.md"; then
-            stale-comments hide "$RUNNER_TEMP/stale-comments.jsonl" cli
+            "$SCRIPTS/pr/stale-comments.sh" hide "$RUNNER_TEMP/stale-comments.jsonl" cli
           else
             echo "::warning::Could not comment on PR #$PR_NUMBER. The caller must grant pull-requests: write, and a PR from a fork gets a read-only token. The output is in the job summary."
           fi

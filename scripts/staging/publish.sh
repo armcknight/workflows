@@ -22,8 +22,7 @@
 #
 # Run it in the checkout the IPA was built from: the comment names its HEAD.
 # Needs AWS credentials that can write the bucket and that last as long as the
-# link, and ota-publish (armcknight/tools), build-expiry and stale-comments
-# (.github/actions/) on PATH.
+# link, and ota-publish (armcknight/tools) on PATH.
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/../lib.sh
 . "$(dirname "$0")/../lib.sh"
@@ -33,6 +32,8 @@ set -euo pipefail
 : "${GH_REPO:?Set GH_REPO to owner/name.}"
 LINK_TTL_SECONDS="${LINK_TTL_SECONDS:-43200}"
 RUN_URL="${RUN_URL:-${GITHUB_SERVER_URL:-https://github.com}/$GH_REPO/actions/runs/$RUN_ID}"
+
+here="$(dirname "$0")"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -52,7 +53,7 @@ expires=$(printf '%s' "$result" | jq -r '.expiresAt')
 
 printf 'Staging build ready (commit `%s`, [run %s](%s)).\n\nOpen on your iPhone/iPad in **Safari** on a registered device, then tap Install:\n\n[📲 Install staging build](%s)\n\n_Link expires %s. Comment `/refresh-staging` on this PR for a fresh link — no rebuild needed. Comment `/build-staging` for a new build of the newest commit._\n' \
   "${sha::7}" "$RUN_ID" "$RUN_URL" "$landing" "$expires" > "$tmp/comment.md"
-build_expires=$(build-expiry "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
+build_expires=$("$here/build-expiry.sh" "$S3_BUCKET" "$PROJECT" "$PR_NUMBER" "$RUN_ID")
 if [ -n "$build_expires" ]; then
   printf '\n_The build itself is deleted %s, by the lifecycle rule on the staging bucket._\n' \
     "$build_expires" >> "$tmp/comment.md"
@@ -60,6 +61,6 @@ fi
 
 # Read the stale comments before posting, so the new comment is never among
 # them.
-stale-comments collect "$PR_NUMBER" "$tmp/stale-comments.jsonl"
+"$here/../pr/stale-comments.sh" collect "$PR_NUMBER" "$tmp/stale-comments.jsonl"
 gh pr comment "$PR_NUMBER" --body-file "$tmp/comment.md"
-stale-comments hide "$tmp/stale-comments.jsonl" staged refreshed notice command
+"$here/../pr/stale-comments.sh" hide "$tmp/stale-comments.jsonl" staged refreshed notice command

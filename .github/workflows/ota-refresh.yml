@@ -101,14 +101,6 @@ jobs:
     - name: Install ota-publish
       run: brew install armcknight/tools/tools
 
-    # Shared with ios-ci.yml. Pinned to main: a reusable workflow cannot refer
-    # to an action at its own ref.
-    - name: Set up stale-comments
-      uses: armcknight/workflows/.github/actions/stale-comments@main
-
-    - name: Set up build-expiry
-      uses: armcknight/workflows/.github/actions/build-expiry@main
-
     - name: Re-sign OTA link and comment on PR
       id: refresh
       env:

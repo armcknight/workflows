@@ -43,14 +43,28 @@ edit a caller applies.
   - **swiftpm-cask-release**: with `sign: true`, the release fails when the
     certificate match fetches belongs to a team other than `team-id`, as
     macos-cask-release already does.
-- **ios-ci**, **swift-package-ci**: the `ui-screenshots` action has a `run`
-  subcommand and the `cli-examples` action a `build` subcommand, for the steps
-  that ran the UI tests and built the product inline.
+- **ios-ci**, **swift-package-ci**: `scripts/ios/ui-screenshots.sh` has a
+  `run` subcommand and `scripts/swift-package/cli-examples.sh` a `build`
+  subcommand, for the steps that ran the UI tests and built the product
+  inline.
+- **swift-package-ci**: the Python that reads the commands from a PR
+  description's `cli-examples` marker is now its own file,
+  `scripts/swift-package/cli-examples-commands.py`, not inline in
+  `cli-examples.sh`. No change in behavior.
 - **ci**: `make lint` and the `ci` workflow also shellcheck the scripts in
   `.github/actions/`.
 
 ### Fixed
 
+- **ios-ci**, **ota-refresh**, **swift-package-ci**: run the `stale-comments`,
+  `build-expiry`, `ui-screenshots` and `cli-examples` scripts at the commit of
+  the workflow, not at `main`. They are now in `scripts/` (`pr/`, `staging/`,
+  `ios/` and `swift-package/`), and each job checks them out at
+  `job.workflow_sha`; `scripts/staging/publish.sh` and `refresh.sh` call them
+  there, not on `PATH`. Before, the jobs used them through composite actions
+  pinned to `@main`, so a caller pinned to a tag ran an older workflow with the
+  newest scripts, and a change to a script's interface on `main` could break
+  it. No caller change.
 - **swiftpm-cask-release**: the README now names the signing inputs and secrets
   the workflow reads — `match-git-url`, `team-id`, `bundle-id`,
   `MATCH_PASSWORD` and `MATCH_DEPLOY_KEY` — in place of
@@ -60,6 +74,14 @@ edit a caller applies.
   `marketplace-path` and `changelog` to `run:` steps through `env:`, not as
   inline `${{ inputs.* }}` expressions. Before, a value with a quote or `$(` in
   it ran as shell.
+
+### Deprecated
+
+- The `stale-comments`, `build-expiry`, `ui-screenshots` and `cli-examples`
+  composite actions in `.github/actions/`. Workflows of 4.2.0 and earlier use
+  them at `@main`, so they stay, and run the scripts in `scripts/`. They go in
+  the next major version: move a pin of 4.2.0 or earlier to this release before
+  then.
 
 ## [4.2.0] 2026-10-18
 

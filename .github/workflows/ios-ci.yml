@@ -311,13 +311,20 @@ jobs:
         aws-region: ${{ vars.AWS_REGION }}
         role-duration-seconds: ${{ env.LINK_TTL_SECONDS }}
 
-    # Shared with ota-refresh.yml. Pinned to main: a reusable workflow cannot
-    # refer to an action at its own ref.
-    - name: Set up stale-comments
-      uses: armcknight/workflows/.github/actions/stale-comments@main
-
-    - name: Set up build-expiry
-      uses: armcknight/workflows/.github/actions/build-expiry@main
+    # The scripts in this repository, at the commit of this workflow. They go
+    # out of the workspace, so that they are not in the caller's checkout.
+    - name: Check out the scripts
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .armcknight-workflows
+        sparse-checkout: scripts
+    - name: Move the scripts out of the workspace
+      working-directory: .
+      run: |
+        mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
+        echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
     - name: Publish OTA build to S3 and comment on PR
       env:
@@ -353,20 +360,12 @@ jobs:
         # `HEAD^1..HEAD` is exactly the PR's change.
         fetch-depth: 2
 
-    # Pinned to main: a reusable workflow cannot refer to an action at its own
-    # ref.
-    - name: Set up ui-screenshots
-      uses: armcknight/workflows/.github/actions/ui-screenshots@main
-
     # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
     - name: Check out the scripts
       uses: armcknight/workflows/.github/actions/scripts@main
       with:
         repository: ${{ job.workflow_repository }}
         ref: ${{ job.workflow_sha }}
-
-    - name: Set up stale-comments
-      uses: armcknight/workflows/.github/actions/stale-comments@main
 
     - name: Find the UI tests this PR adds or changes
       id: tests
@@ -381,7 +380,7 @@ jobs:
           echo "::error::Set ui-screenshots-path along with ui-screenshots-scheme."
           exit 1
         fi
-        ONLY_TESTING=$(ui-screenshots tests "$TEST_DIR" "$TEST_TARGET")
+        ONLY_TESTING=$("$SCRIPTS/ios/ui-screenshots.sh" tests "$TEST_DIR" "$TEST_TARGET")
         echo "only-testing=$ONLY_TESTING" >> "$GITHUB_OUTPUT"
         if [ -z "$ONLY_TESTING" ]; then
           echo "This PR adds or changes no UI tests under $TEST_DIR and names none in a ui-screenshots marker; nothing to screenshot."
@@ -432,7 +431,7 @@ jobs:
         # takes at the failure, are what explain it. The publish step fails the
         # job afterwards.
         # shellcheck disable=SC2086 # ONLY_TESTING is one argument per test class.
-        if ui-screenshots run "$SCHEME" "$DESTINATION" ui-screenshots.xcresult $ONLY_TESTING; then
+        if "$SCRIPTS/ios/ui-screenshots.sh" run "$SCHEME" "$DESTINATION" ui-screenshots.xcresult $ONLY_TESTING; then
           echo "passed=true" >> "$GITHUB_OUTPUT"
         else
           echo "passed=false" >> "$GITHUB_OUTPUT"
@@ -447,15 +446,15 @@ jobs:
         PASSED: ${{ steps.run.outputs.passed }}
       run: |
         if [ -d ui-screenshots.xcresult ]; then
-          ui-screenshots publish ui-screenshots.xcresult "$PR_NUMBER" "$SHA" "${PASSED:-false}" /tmp/ui-screenshots.md
+          "$SCRIPTS/ios/ui-screenshots.sh" publish ui-screenshots.xcresult "$PR_NUMBER" "$SHA" "${PASSED:-false}" /tmp/ui-screenshots.md
         else
           echo "The UI tests made no result bundle."
         fi
         if [ -s /tmp/ui-screenshots.md ]; then
           # Only the newest set of screenshots stays visible.
-          stale-comments collect "$PR_NUMBER" /tmp/stale-comments.jsonl
+          "$SCRIPTS/pr/stale-comments.sh" collect "$PR_NUMBER" /tmp/stale-comments.jsonl
           gh pr comment "$PR_NUMBER" --body-file /tmp/ui-screenshots.md
-          stale-comments hide /tmp/stale-comments.jsonl media
+          "$SCRIPTS/pr/stale-comments.sh" hide /tmp/stale-comments.jsonl media
         fi
         if [ "$PASSED" != "true" ]; then
           echo "::error::The UI tests failed."

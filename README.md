@@ -316,7 +316,10 @@ the path in `$SCRIPTS`.
 
 | Directory | Scripts | Used by |
 |-----------|---------|---------|
-| `scripts/staging/` | `authorize.sh`, `check-commenter.sh`, `pr-state.sh`, `pr-head-ref.sh`, `publish.sh`, `refresh.sh`, `cleanup.sh` | `ios-ci.yml`, `ota-refresh.yml`, `ota-cleanup.yml` |
+| `scripts/staging/` | `authorize.sh`, `check-commenter.sh`, `pr-state.sh`, `pr-head-ref.sh`, `publish.sh`, `refresh.sh`, `build-expiry.sh`, `cleanup.sh` | `ios-ci.yml`, `ota-refresh.yml`, `ota-cleanup.yml` |
+| `scripts/pr/` | `stale-comments.sh` | `ios-ci.yml`, `ota-refresh.yml`, `swift-package-ci.yml` |
+| `scripts/ios/` | `ui-screenshots.sh` | `ios-ci.yml` |
+| `scripts/swift-package/` | `cli-examples.sh` (with `cli-examples-commands.py`) | `swift-package-ci.yml` |
 | `scripts/xcode/` | `prepare-env.sh`, `stamp-marketing-version.sh`, `export-app.sh` | `ios-ci.yml`, `macos-cask-release.yml` |
 | `scripts/signing/` | `install-match-key.sh`, `match-signing-identity.sh`, `sign-binaries.sh`, `notarize.sh` | `ios-ci.yml`, `macos-cask-release.yml`, `swiftpm-cask-release.yml` |
 | `scripts/release/` | `release-version.sh`, `source-version.sh`, `check-tag-version.sh`, `check-binaries.sh`, `cask-path.sh`, `bump-cask.sh`, `publish-github-release.sh` | `macos-cask-release.yml`, `swiftpm-cask-release.yml`, `github-release.yml`, `claude-plugin-release.yml` |
@@ -325,13 +328,9 @@ For example, to re-sign a PR's staging link by hand:
 
 ```sh
 export S3_BUCKET=my-bucket AWS_REGION=us-east-1 PROJECT=my-app PR_NUMBER=42 GH_REPO=me/my-app
-PATH="$PWD/.github/actions/stale-comments:$PWD/.github/actions/build-expiry:$PATH" \
-  scripts/staging/refresh.sh
+scripts/staging/refresh.sh
 ```
 
-The staging scripts also need `stale-comments` and `build-expiry` on `PATH`.
-Those, and `ui-screenshots` and `cli-examples`, are still composite actions in
-`.github/actions/`, which the workflows use pinned to `@main`.
 `install-match-key.sh` and `match-signing-identity.sh` change the machine they
 run on (`~/.ssh/id_ed25519`, the keychain search list), so they are for a CI
 machine, not a workstation.
@@ -360,6 +359,10 @@ uses: armcknight/workflows/.github/workflows/ios-ci.yml@1
 Tags are bare, with no `v` prefix, the same as `armcknight/tools`. A release
 candidate carries an `-RC<n>` suffix and never moves the `1` alias, so a caller
 pinned to `1` never picks one up.
+
+The shell scripts the workflows run are in [`scripts/`](scripts). Each job
+checks them out at the commit of its workflow (`job.workflow_sha`), so a pinned
+caller runs the scripts of the release it pins, never those of `main`.
 
 A major bump is a signal, not a failure. Read that release's `### Caller
 migration` block, apply the edit it names, and move the pin to `2`.

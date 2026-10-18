@@ -4,6 +4,10 @@ description: >
   comments that a new staging link makes stale and hide them. Shared by
   ios-ci.yml and ota-refresh.yml.
 
+  Deprecated: kept for callers pinned to 4.2.0 or earlier. The workflows now
+  check out scripts/pr/stale-comments.sh at their own commit and run it from there.
+  Removed in the next major version.
+
 runs:
   using: composite
   steps:
