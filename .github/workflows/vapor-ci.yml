@@ -1,0 +1,120 @@
+name: Vapor CI (reusable)
+
+# Reusable build + test for a Vapor server, on Linux in the swift image, the
+# same as the server runs on Fly. It also builds the server's Docker image, so a
+# change that breaks the image fails before a deploy. It is separate from
+# swift-package-ci.yml, which runs on macOS: on Linux, Foundation differs and
+# Darwin-only packages do not build.
+#
+#   jobs:
+#     ci:
+#       uses: armcknight/workflows/.github/workflows/vapor-ci.yml@4
+#       with:
+#         swift-image: swift:6.0-noble
+#
+# Keep `swift-image` in step with the Dockerfile's `FROM swift:` lines.
+
+on:
+  workflow_call:
+    inputs:
+      swift-image:
+        description: "The swift image the package builds and tests in, such as `swift:6.0-noble`. Use the Dockerfile's build image."
+        required: true
+        type: string
+      product:
+        description: "The executable product to build. Empty (the default) builds every product."
+        required: false
+        type: string
+        default: ""
+      build-args:
+        description: "Extra arguments appended to `swift build`."
+        required: false
+        type: string
+        default: ""
+      run-tests:
+        description: "Run `swift test` after the build. Set `false` for a package with no tests that build on Linux."
+        required: false
+        type: boolean
+        default: true
+      test-args:
+        description: "Extra arguments appended to `swift test`."
+        required: false
+        type: string
+        default: ""
+      submodules:
+        description: "Passed to actions/checkout. Use `recursive` when path-based SwiftPM dependencies are git submodules. Empty (the default) checks out no submodules."
+        required: false
+        type: string
+        default: ""
+      docker-build:
+        description: "Build the Docker image, without pushing it. Set `false` for a package with no Dockerfile."
+        required: false
+        type: boolean
+        default: true
+      dockerfile:
+        description: "The Dockerfile, relative to the repository root."
+        required: false
+        type: string
+        default: "Dockerfile"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test on Linux
+    runs-on: ubuntu-latest
+    container: ${{ inputs.swift-image }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - name: Cache the dependencies and the build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: vapor-ci-${{ inputs.swift-image }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: vapor-ci-${{ inputs.swift-image }}-
+
+      - name: Build
+        env:
+          PRODUCT: ${{ inputs.product }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          if [ -n "$PRODUCT" ]; then
+            # shellcheck disable=SC2086 # BUILD_ARGS is the caller's extra flags.
+            swift build --product "$PRODUCT" $BUILD_ARGS
+          else
+            # shellcheck disable=SC2086
+            swift build $BUILD_ARGS
+          fi
+
+      - name: Test
+        if: inputs.run-tests
+        env:
+          TEST_ARGS: ${{ inputs.test-args }}
+        run: |
+          # shellcheck disable=SC2086 # TEST_ARGS is the caller's extra flags.
+          swift test $TEST_ARGS
+
+  docker:
+    name: Build the Docker image
+    if: inputs.docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: ${{ inputs.submodules }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Not pushed: Fly's builder makes the image that is deployed.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: false
+          build-args: GIT_SHA=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
