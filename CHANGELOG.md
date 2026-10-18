@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [4.2.0] 2026-10-18
+
 ### Added
 
 - **vapor-ci**: a new workflow for Vapor servers. It builds and tests the
