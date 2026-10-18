@@ -35,6 +35,12 @@ edit a caller applies.
   deploys only on `workflow_dispatch`; `merge` also deploys on each push to the
   default branch. It refuses a commit that is not the branch's tip. It needs the
   `FLY_API_TOKEN` secret, a deploy token for the app.
+- **scripts/**: the shell scripts that `vapor-ci.yml` and `fly-deploy.yml`
+  run, in `scripts/vapor/` and `scripts/fly/`. They have no dependency on
+  GitHub Actions, so they also run locally or on a different CI provider. The
+  workflows check them out at their own commit. `make lint` and the `ci`
+  workflow shellcheck them, and a change to them needs a changelog entry, as a
+  change to `.github/` does.
 
 ## [4.1.0] 2026-10-16
 

@@ -7,3 +7,11 @@
 self-hosted-runner:
   labels:
     - macos-26
+
+# GitHub has the job context's workflow_repository and workflow_sha, but the
+# pinned actionlint does not know them yet. The reusable workflows check out
+# their scripts with them, at the commit of the workflow.
+paths:
+  .github/workflows/**/*.yml:
+    ignore:
+      - 'property "workflow_(repository|sha)" is not defined in object type'
