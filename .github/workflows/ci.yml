@@ -27,13 +27,16 @@ jobs:
       with:
         args: -color
 
-    # The scripts the reusable workflows check out and run are not in a `run:`
-    # block, so actionlint does not see them. Same image, same excludes.
-    - name: Lint scripts/
+    # The scripts the reusable workflows check out and run, and the scripts
+    # beside each composite action's action.yml, are not in a `run:` block, so
+    # actionlint does not see them. Same image, same excludes.
+    - name: Lint the scripts
       run: |
+        actions=$(find .github/actions -type f ! -name action.yml)
+        # shellcheck disable=SC2086 # One argument per script path.
         docker run --rm -v "$PWD":/repo -w /repo --entrypoint shellcheck \
           rhysd/actionlint:1.7.7 -e SC2016 -e SC2129 -e SC2015 \
-          -x scripts/lib.sh scripts/*/*.sh
+          -x scripts/lib.sh scripts/*/*.sh $actions
 
   changelog:
     name: Changelog entry

@@ -120,6 +120,13 @@ jobs:
     name: Release
     runs-on: ${{ inputs.runs-on }}
     steps:
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
     - uses: actions/checkout@v5
       with:
         submodules: ${{ inputs.submodules }}
@@ -139,37 +146,15 @@ jobs:
         # what a user sees from `--version`. If they disagree, every bug report
         # cites the wrong build.
         if [ -n "$VERSION_FILE" ]; then
-          if [ -z "$VERSION_REGEX" ]; then
-            echo "::error::version-file is set but version-regex is empty. Both are needed to read the version."
-            exit 1
-          fi
-          if [ ! -f "$VERSION_FILE" ]; then
-            echo "::error file=$VERSION_FILE::version-file does not exist."
-            exit 1
-          fi
-          SRC_VERSION="$(sed -nE "s/${VERSION_REGEX}/\1/p" "$VERSION_FILE" | head -1)"
-          if [ -z "$SRC_VERSION" ]; then
-            echo "::error file=$VERSION_FILE::version-regex matched nothing. It needs exactly one capture group around the version."
-            exit 1
-          fi
-          # An RC tag like 1.2.3-RC1 should match the source's base 1.2.3.
-          BASE="${TAG%%-*}"
-          if [ "$BASE" != "$SRC_VERSION" ]; then
-            echo "::error file=$VERSION_FILE::Source version ($SRC_VERSION) does not match the base of tag ($TAG). Bump the source, or the release ships a binary that reports the wrong version."
-            exit 1
-          fi
-          echo "Tag $TAG agrees with source version $SRC_VERSION"
+          SRC_VERSION=$("$SCRIPTS/release/source-version.sh")
+          TAG="$TAG" VERSION="$SRC_VERSION" VERSION_SOURCE="$VERSION_FILE" \
+            "$SCRIPTS/release/check-tag-version.sh"
         else
           echo "::notice::No version-file given, so the tag is not checked against the source."
         fi
 
-        # An RC goes to its own cask, so the stable channel is untouched.
-        case "$TAG" in
-          *-*) CASK_PATH="Casks/${CASK_NAME}-rc.rb" ;;
-          *)   CASK_PATH="Casks/${CASK_NAME}.rb" ;;
-        esac
-
         echo "version=$TAG" >> "$GITHUB_OUTPUT"
+        CASK_PATH=$(TAG="$TAG" "$SCRIPTS/release/cask-path.sh")
         echo "cask_path=$CASK_PATH" >> "$GITHUB_OUTPUT"
 
     - name: Build release binaries
@@ -178,17 +163,9 @@ jobs:
     - name: Check every named binary was built
       env:
         BINARIES: ${{ inputs.binaries }}
+        BIN_DIR: .build/release
       run: |
-        set -euo pipefail
-        # Unquoted on purpose: `binaries` is a list, and splitting it on
-        # whitespace is how a caller passes more than one.
-        # shellcheck disable=SC2086
-        for bin in $BINARIES; do
-          if [ ! -f ".build/release/$bin" ]; then
-            echo "::error::.build/release/$bin does not exist. Is '$bin' an executable product of this package?"
-            exit 1
-          fi
-        done
+        "$SCRIPTS/release/check-binaries.sh"
 
     - name: Sign and notarize
       id: signing
@@ -203,6 +180,7 @@ jobs:
         NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
         NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
         NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        KEYCHAIN: swiftpm-cask-release
         FASTLANE_SKIP_UPDATE_CHECK: "1"
         LC_ALL: en_US.UTF-8
         LANG: en_US.UTF-8
@@ -216,94 +194,19 @@ jobs:
           fi
         done
 
-        # Read access to the (private) fastlane match repo over SSH.
-        mkdir -p ~/.ssh
-        # echo (not printf) so the key keeps the trailing newline OpenSSH needs.
-        echo "$MATCH_DEPLOY_KEY" > ~/.ssh/id_ed25519
-        chmod 600 ~/.ssh/id_ed25519
-        ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+        "$SCRIPTS/signing/install-match-key.sh"
 
-        # A throwaway keychain, so nothing is left in the runner's login keychain
-        # and the cleanup step can delete the lot.
-        KEYCHAIN_NAME="swiftpm-cask-release"
-        KEYCHAIN_PASSWORD="$(uuidgen)"
-        security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
-        security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
-        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
-        # The substitution must word-split: `-s` takes the new search list as
-        # separate arguments, so quoting it would pass every existing keychain
-        # as one path and drop them all.
-        # shellcheck disable=SC2046
-        security list-keychains -d user -s "$KEYCHAIN_NAME" $(security list-keychains -d user | tr -d '"')
-        echo "keychain=$KEYCHAIN_NAME" >> "$GITHUB_OUTPUT"
+        # Before match runs, so the cleanup step deletes the keychain even when
+        # match fails.
+        echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+        # The Developer ID Application cert is team-wide, so match's
+        # app_identifier is unused; the caller supplies it via bundle-id. Uses
+        # the runner's preinstalled fastlane, so the caller needs no Gemfile.
+        IDENTITY=$(APP_IDENTIFIER="$BUNDLE_ID" "$SCRIPTS/signing/match-signing-identity.sh")
 
-        # match readonly reads the Developer ID Application cert out of the match
-        # repo and imports it into the keychain, making no Apple API calls — so no
-        # Apple credentials are needed to sign. The cert must already be in the
-        # match repo (created once with `fastlane match developer_id`). Uses the
-        # runner's preinstalled fastlane, so the caller needs no Gemfile.
-        # match requires app_identifier even for a developer_id fetch with
-        # skip_provisioning_profiles — it validates the option before it ever
-        # looks at profiles. The Developer ID Application cert is team-wide, so
-        # the value is unused; the caller supplies it via the bundle-id input.
-        fastlane run match \
-          type:developer_id \
-          platform:macos \
-          readonly:true \
-          skip_provisioning_profiles:true \
-          app_identifier:"$BUNDLE_ID" \
-          git_url:"$MATCH_GIT_URL" \
-          team_id:"$TEAM_ID" \
-          keychain_name:"$KEYCHAIN_NAME" \
-          keychain_password:"$KEYCHAIN_PASSWORD"
-
-        IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_NAME" \
-          | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')"
-        if [ -z "$IDENTITY" ]; then
-          echo "::error::match left no 'Developer ID Application' identity in the keychain. Has the certificate been created in the match repo (fastlane match developer_id)?"
-          security find-identity -v -p codesigning "$KEYCHAIN_NAME" || true
-          exit 1
-        fi
-        echo "Signing identity: $IDENTITY"
-
-        # --options runtime is what makes the binary eligible for notarization.
-        # --timestamp is what keeps the signature valid after the cert expires.
-        # shellcheck disable=SC2086
-        for bin in $BINARIES; do
-          codesign --force --options runtime --timestamp \
-            --keychain "$KEYCHAIN_NAME" --sign "$IDENTITY" ".build/release/$bin"
-          codesign --verify --strict --verbose=2 ".build/release/$bin"
-        done
-
-        # notarytool takes an archive, never a loose binary.
-        STAGE="${RUNNER_TEMP}/notarize"
-        mkdir -p "$STAGE"
-        # shellcheck disable=SC2086
-        for bin in $BINARIES; do
-          cp ".build/release/$bin" "$STAGE/"
-        done
-        # No --keepParent: the binaries belong at the root of the zip.
-        ditto -c -k "$STAGE" "${RUNNER_TEMP}/notarize.zip"
-
-        KEY_PATH="${RUNNER_TEMP}/notary.p8"
-        printf '%s' "$NOTARY_KEY" | base64 --decode > "$KEY_PATH"
-        set +e
-        SUBMIT_JSON="$(xcrun notarytool submit "${RUNNER_TEMP}/notarize.zip" \
-          --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
-          --wait --timeout 30m --output-format json)"
-        SUBMIT_STATUS=$?
-        set -e
-        echo "$SUBMIT_JSON"
-        ID="$(printf '%s' "$SUBMIT_JSON" | jq -r '.id // empty')"
-        STATUS="$(printf '%s' "$SUBMIT_JSON" | jq -r '.status // empty')"
-        if [ "$STATUS" != "Accepted" ] || [ "$SUBMIT_STATUS" -ne 0 ]; then
-          echo "::error::Notarization did not succeed (status: ${STATUS:-unknown})."
-          [ -n "$ID" ] && xcrun notarytool log "$ID" \
-            --key "$KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" || true
-          rm -f "$KEY_PATH"
-          exit 1
-        fi
-        rm -f "$KEY_PATH"
+        export ZIP="${RUNNER_TEMP}/notarize.zip"
+        IDENTITY="$IDENTITY" BIN_DIR=.build/release "$SCRIPTS/signing/sign-binaries.sh"
+        "$SCRIPTS/signing/notarize.sh"
 
         # No `stapler` step: it only writes a ticket into a bundle, a .dmg or a
         # .pkg, and these are bare executables. Gatekeeper looks the ticket up
@@ -351,40 +254,10 @@ jobs:
         BINARIES: ${{ inputs.binaries }}
       run: |
         set -euo pipefail
-        git clone "https://github.com/${TAP_REPO}.git" tap
-        cd tap
-        # Authenticate the push via a credential helper that reads GH_TOKEN at
-        # push time, so the token is never written into .git/config (where
-        # `git remote -v` would print it, and any workspace dump would leak it).
-        git config credential.helper '!f() { echo "username=x-access-token"; echo "password=$GH_TOKEN"; }; f'
-        if [ ! -f "$CASK_PATH" ]; then
-          echo "::error::$CASK_PATH does not exist in $TAP_REPO. This workflow rewrites a cask; it does not create one."
-          exit 1
-        fi
-        sed -i '' -E "s/^  version \".*\"$/  version \"${VERSION}\"/" "$CASK_PATH"
-        sed -i '' -E "s/^  sha256 \".*\"$/  sha256 \"${SHA256}\"/" "$CASK_PATH"
-        # The archive holds exactly `binaries`, so the cask must link exactly
-        # those. Replace the existing binary lines in place, keeping whatever
-        # stanzas come before and after them.
-        if ! grep -q '^  binary "' "$CASK_PATH"; then
-          echo "::error::$CASK_PATH has no binary lines, so there is no place to write them."
-          exit 1
-        fi
-        # Unquoted on purpose, as in the build check: one line per binary.
-        # shellcheck disable=SC2086
-        NEW_BINARIES="$(printf '  binary "%s"\n' $BINARIES)"
-        export NEW_BINARIES
-        awk '/^  binary "/ { if (!done) { print ENVIRON["NEW_BINARIES"]; done = 1 }; next } { print }' "$CASK_PATH" > "$CASK_PATH.new"
-        mv "$CASK_PATH.new" "$CASK_PATH"
-        if git diff --quiet; then
-          echo "no cask changes to commit"
-          exit 0
-        fi
-        git config user.name "github-actions[bot]"
-        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add "$CASK_PATH"
-        git commit -m "${CASK_NAME}: bump $(basename "$CASK_PATH" .rb) to ${VERSION}"
-        git push
+        # The archive holds exactly `binaries`, so bump-cask.sh rewrites the
+        # cask's binary lines from BINARIES.
+        COMMIT_MESSAGE="${CASK_NAME}: bump $(basename "$CASK_PATH" .rb) to ${VERSION}" \
+          "$SCRIPTS/release/bump-cask.sh"
 
     - name: Clean up signing keychain
       if: always() && steps.signing.outputs.keychain != ''

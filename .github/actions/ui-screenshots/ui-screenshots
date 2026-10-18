@@ -20,6 +20,12 @@
 #     Print an xcodebuild destination for the newest available iPhone
 #     simulator.
 #
+#   ui-screenshots run <scheme> <destination> <xcresult> [<only-testing>...]
+#     Run the UI tests of <scheme> with `xcodebuild test`, writing the result
+#     bundle to <xcresult>, with each <only-testing> argument (from `tests`)
+#     and no code signing. An empty <destination> is the one `destination`
+#     prints. Exit with xcodebuild's status.
+#
 #   ui-screenshots publish <xcresult> <pr-number> <sha> <tests-passed> <comment-file>
 #     Export the result bundle's PNG attachments, commit them to the
 #     `ui-screenshots` branch under pr-<n>/<sha7>/, and write a PR comment that
@@ -45,10 +51,12 @@ tests() {
   done < <(git diff --relative --name-only --diff-filter=AMR HEAD^1 HEAD -- "$dir" | grep '\.swift$' || true)
 
   local ids id
+  # shellcheck disable=SC2086 # One class name per word.
   ids=$(printf '%s\n' $classes)
   # Test IDs named in the PR description's marker. Keep only the characters a
   # test ID can have: the description is text anyone with access can edit.
   local named
+  # shellcheck disable=SC2020 # Each separator becomes a newline.
   named=$(printf '%s' "${PR_BODY:-}" \
     | perl -0777 -ne 'print "$1\n" while /<!--\s*ui-screenshots:(.*?)-->/gs' \
     | tr ', \t\r' '\n\n\n\n' | sed 's/()$//' | grep -E '^[A-Za-z_][A-Za-z0-9_/]*$' || true)
@@ -77,6 +85,19 @@ destination() {
   printf 'id=%s' "$udid"
 }
 
+run() {
+  local scheme="$1" destination="$2" xcresult="$3"
+  shift 3
+  [ -n "$destination" ] || destination=$(destination)
+  xcodebuild test \
+    -scheme "$scheme" \
+    -destination "$destination" \
+    -resultBundlePath "$xcresult" \
+    "$@" \
+    CODE_SIGNING_ALLOWED=NO \
+    | xcbeautify
+}
+
 publish() {
   local xcresult="$1" pr="$2" sha="$3" passed="$4" comment="$5"
   local export_dir dest
@@ -99,7 +120,8 @@ publish() {
   fi
 
   local repo_dir prefix="pr-$pr/${sha::7}"
-  local auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+  local auth
+  auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
   local remote="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
 
   # Another PR may push between our fetch and push; start over from its
@@ -179,6 +201,7 @@ slug() {
 case "${1:-}" in
   tests) shift; tests "$@" ;;
   destination) shift; destination "$@" ;;
+  run) shift; run "$@" ;;
   publish) shift; publish "$@" ;;
-  *) echo "usage: ui-screenshots tests <test-dir> <test-target> | destination | publish <xcresult> <pr-number> <sha> <tests-passed> <comment-file>" >&2; exit 2 ;;
+  *) echo "usage: ui-screenshots tests <test-dir> <test-target> | destination | run <scheme> <destination> <xcresult> [<only-testing>...] | publish <xcresult> <pr-number> <sha> <tests-passed> <comment-file>" >&2; exit 2 ;;
 esac

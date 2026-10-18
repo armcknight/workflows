@@ -103,19 +103,12 @@ jobs:
     name: Check the inputs
     runs-on: ubuntu-latest
     steps:
-      # The scripts in this repository, at the commit of this workflow. They go
-      # out of the workspace, so that they are not in the caller's checkout.
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
       - name: Check out the scripts
-        uses: actions/checkout@v5
+        uses: armcknight/workflows/.github/actions/scripts@main
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: .armcknight-workflows
-          sparse-checkout: scripts
-      - name: Move the scripts out of the workspace
-        run: |
-          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
       - name: Check deploy-on
         env:
@@ -143,20 +136,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The scripts in this repository, at the commit of this workflow. They go
-      # out of the workspace, so that they are not in the caller's checkout.
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
       - name: Check out the scripts
-        uses: actions/checkout@v5
+        uses: armcknight/workflows/.github/actions/scripts@main
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
-          path: .armcknight-workflows
-          sparse-checkout: scripts
-      - name: Move the scripts out of the workspace
-        working-directory: .
-        run: |
-          mv .armcknight-workflows "$RUNNER_TEMP/armcknight-workflows"
-          echo "SCRIPTS=$RUNNER_TEMP/armcknight-workflows/scripts" >> "$GITHUB_ENV"
 
       - name: Refuse a commit that is not the tip of the default branch
         env:
