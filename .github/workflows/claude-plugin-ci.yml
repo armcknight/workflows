@@ -43,7 +43,11 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Validate plugin manifest
-        run: claude plugin validate "${{ inputs.plugin-path }}"
+        env:
+          PLUGIN_PATH: ${{ inputs.plugin-path }}
+        run: claude plugin validate "$PLUGIN_PATH"
 
       - name: Validate marketplace manifest
-        run: claude plugin validate "${{ inputs.marketplace-path }}"
+        env:
+          MARKETPLACE_PATH: ${{ inputs.marketplace-path }}
+        run: claude plugin validate "$MARKETPLACE_PATH"
