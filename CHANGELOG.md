@@ -25,6 +25,11 @@ edit a caller applies.
 
 ### Fixed
 
+- **swiftpm-cask-release**: the README now names the signing inputs and secrets
+  the workflow reads — `match-git-url`, `team-id`, `bundle-id`,
+  `MATCH_PASSWORD` and `MATCH_DEPLOY_KEY` — in place of
+  `DEVELOPER_ID_P12_BASE64` and `DEVELOPER_ID_P12_PASSWORD`, and lists the
+  `submodules` input. Docs only; the workflow does not change.
 - **claude-plugin-ci, claude-plugin-release**: pass `plugin-path`,
   `marketplace-path` and `changelog` to `run:` steps through `env:`, not as
   inline `${{ inputs.* }}` expressions. Before, a value with a quote or `$(` in
