@@ -18,6 +18,12 @@ name: GitHub release (reusable)
 # release stays the one GitHub shows as "Latest". Set `prerelease: true` to force
 # it for a tag that carries no suffix.
 #
+# Set `major-alias: true` to also move the major alias tag that callers pin —
+# `2` for the tag 2.1.0, `v1` for the tag v1.2.3 — to a final release. It never
+# moves for a release candidate, refuses a tag the default branch does not
+# contain, and stays put when a newer final release of the same major exists,
+# so a patch cut on an older line never drags it backwards.
+#
 # Caller requirements:
 #   - trigger on a version tag push (`X.Y.Z`, optionally with an RC suffix)
 #   - `permissions: contents: write` (to create the release)
@@ -66,6 +72,11 @@ on:
         default: ""
       prerelease:
         description: "Force the release to be marked a prerelease. A tag with a prerelease suffix is marked one regardless."
+        required: false
+        type: boolean
+        default: false
+      major-alias:
+        description: "Move the major alias tag (`2` for 2.1.0) to the tag after a final release. Never for a release candidate, and only when the tag is on the default branch and is the newest of its major."
         required: false
         type: boolean
         default: false
@@ -118,3 +129,29 @@ jobs:
           # and globs that must word-split and expand here.
           # shellcheck disable=SC2086
           gh release upload "$GITHUB_REF_NAME" $ASSETS --clobber
+
+  major-alias:
+    name: Move the major alias tag
+    # A release candidate must never reach a caller pinned to a bare major. The
+    # script checks this too; skipping the job here saves a runner.
+    if: ${{ inputs.major-alias && !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+      - name: Check out the scripts
+        uses: armcknight/workflows/.github/actions/scripts@main
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+
+      - name: Move the alias
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          "$SCRIPTS/release/move-major-alias.sh"

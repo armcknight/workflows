@@ -53,8 +53,8 @@ lint:
 #   make minor && make deploy
 #
 # The tag is exactly the contents of VERSION — bare, with no `v` prefix, the same
-# as armcknight/tools. release.yml then publishes the GitHub release and moves
-# the major alias (`1`) that callers pin.
+# as armcknight/tools. release.yml then calls github-release.yml, which publishes
+# the GitHub release and moves the major alias (`1`) that callers pin.
 
 ## patch: bump the patch version in VERSION and commit it
 .PHONY: patch
