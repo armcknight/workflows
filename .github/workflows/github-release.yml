@@ -28,6 +28,9 @@ name: GitHub release (reusable)
 #   - trigger on a version tag push (`X.Y.Z`, optionally with an RC suffix)
 #   - `permissions: contents: write` (to create the release)
 #   - a CHANGELOG.md with a section for the version being released
+#   - optional: the SITE_DISPATCH_TOKEN secret, passed by name or with
+#     `secrets: inherit`, to ask armcknight/mcknight.io to refresh its projects
+#     page once the release is published (see README)
 #
 #   jobs:
 #     release:
@@ -81,6 +84,11 @@ on:
         type: boolean
         default: false
 
+    secrets:
+      SITE_DISPATCH_TOKEN:
+        description: "Token with Contents: read+write on armcknight/mcknight.io. When set, a published release asks it to refresh its projects page. Empty (the default) skips that."
+        required: false
+
 jobs:
   github-release:
     name: Publish GitHub release
@@ -129,6 +137,14 @@ jobs:
           # and globs that must word-split and expand here.
           # shellcheck disable=SC2086
           gh release upload "$GITHUB_REF_NAME" $ASSETS --clobber
+
+      # After the release is published, so that only a published release notifies
+      # mcknight.io. Without the SITE_DISPATCH_TOKEN secret it does nothing.
+      - name: Notify mcknight.io
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          "$SCRIPTS/site/notify.sh"
 
   major-alias:
     name: Move the major alias tag

@@ -335,6 +335,14 @@ jobs:
         run: |
           CASK_PATH="Casks/${CASK_NAME}.rb" "$SCRIPTS/release/bump-cask.sh"
 
+      # After the release is published, so that only a published release notifies
+      # mcknight.io. Without the SITE_DISPATCH_TOKEN secret it does nothing.
+      - name: Notify mcknight.io
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          "$SCRIPTS/site/notify.sh"
+
       - name: Clean up signing keychain and SSH key
         if: always()
         env:

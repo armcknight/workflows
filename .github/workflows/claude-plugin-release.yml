@@ -59,6 +59,11 @@ on:
         type: boolean
         default: false
 
+    secrets:
+      SITE_DISPATCH_TOKEN:
+        description: "Token with Contents: read+write on armcknight/mcknight.io. When set, a published release asks it to refresh its projects page. Empty (the default) skips that."
+        required: false
+
 jobs:
   release:
     name: Validate and release
@@ -120,3 +125,11 @@ jobs:
           prepare-github-release "${GITHUB_REF_NAME}" \
             --changelog "$CHANGELOG" \
             ${{ inputs.prerelease && '--prerelease' || '' }}
+
+      # After the release is published, so that only a published release notifies
+      # mcknight.io. Without the SITE_DISPATCH_TOKEN secret it does nothing.
+      - name: Notify mcknight.io
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          "$SCRIPTS/site/notify.sh"

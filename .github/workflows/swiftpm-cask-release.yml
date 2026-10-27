@@ -114,6 +114,9 @@ on:
       NOTARY_ISSUER_ID:
         description: "Issuer ID of that API key. Required when sign is true."
         required: false
+      SITE_DISPATCH_TOKEN:
+        description: "Token with Contents: read+write on armcknight/mcknight.io. When set, a published release asks it to refresh its projects page. Empty (the default) skips that."
+        required: false
 
 jobs:
   release:
@@ -258,6 +261,14 @@ jobs:
         # cask's binary lines from BINARIES.
         COMMIT_MESSAGE="${CASK_NAME}: bump $(basename "$CASK_PATH" .rb) to ${VERSION}" \
           "$SCRIPTS/release/bump-cask.sh"
+
+    # After the release is published, so that only a published release notifies
+    # mcknight.io. Without the SITE_DISPATCH_TOKEN secret it does nothing.
+    - name: Notify mcknight.io
+      env:
+        SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+      run: |
+        "$SCRIPTS/site/notify.sh"
 
     - name: Clean up signing keychain
       if: always() && steps.signing.outputs.keychain != ''
