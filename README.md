@@ -32,15 +32,15 @@ wrap in an `install.html` landing page → emit a link) is done by the
 
 | File | Trigger (in caller) | What it does |
 |------|--------------------|--------------|
-| `ios-ci.yml` | `pull_request`, and `issue_comment` `/build-staging` | Under `pull_request`: the `test` job, and the optional `ui-screenshots` job beside it, which runs the UI tests the PR adds or changes and comments their screenshots. On a `/build-staging` comment (with `pr-number` set): the `authorize` job, then `test`, then the `stage` job: build the ad-hoc IPA, upload to S3, comment a 12 h install link and the time the bucket deletes the build, and hide the PR's stale install links, refresh notices and `/refresh-staging` and `/build-staging` commands. |
+| `ios-ci.yml` | `pull_request`, and `issue_comment` `/build-staging`, and `push` to the default branch | Under `pull_request`: the `test` job, and the optional `ui-screenshots` job beside it, which runs the UI tests the PR adds or changes and comments their screenshots. On a `/build-staging` comment (with `pr-number` set): the `authorize` job, then `test`, then the `stage` job: build the ad-hoc IPA, upload to S3, comment a 12 h install link and the time the bucket deletes the build, and hide the PR's stale install links, refresh notices and `/refresh-staging` and `/build-staging` commands. On a `push` to the default branch, only the `notify-site` job runs ([Notifying mcknight.io](#notifying-mcknightio)). |
 | `ota-refresh.yml` | `issue_comment` `/refresh-staging` or `workflow_dispatch` | Re-sign the link for a PR's latest (or given) build — no rebuild. Earlier install-link comments, earlier refresh notices and the `/refresh-staging` and `/build-staging` commands are hidden as outdated. When the build is gone, comment why on the PR; if the bucket's lifecycle rule deleted it, optionally hand off to `ios-ci.yml` to rebuild. |
 | `ota-cleanup.yml` | `pull_request: closed` | Delete the PR's S3 prefix. |
 | `macos-cask-release.yml` | `push` of a version tag | Build + Developer ID sign + notarize + staple a macOS app, attach the zip to a release on the tap repo, bump the cask. |
-| `swift-package-ci.yml` | `pull_request` | `swift build` and `swift test` for a SwiftPM package, and the optional `cli-examples` job beside them, which runs the commands the PR description names on the base branch and on the PR and comments the change in their output. |
-| `vapor-ci.yml` | `pull_request` | `swift build` and `swift test` for a Vapor server on Linux, in the swift image the Dockerfile builds in, and a build of the Docker image, not pushed. Separate from `swift-package-ci.yml`, which runs on macOS. |
+| `swift-package-ci.yml` | `pull_request`, and `push` to the default branch | `swift build` and `swift test` for a SwiftPM package, and the optional `cli-examples` job beside them, which runs the commands the PR description names on the base branch and on the PR and comments the change in their output. On a `push` to the default branch, also [notifies mcknight.io](#notifying-mcknightio). |
+| `vapor-ci.yml` | `pull_request`, and `push` to the default branch | `swift build` and `swift test` for a Vapor server on Linux, in the swift image the Dockerfile builds in, and a build of the Docker image, not pushed. Separate from `swift-package-ci.yml`, which runs on macOS. On a `push` to the default branch, also [notifies mcknight.io](#notifying-mcknightio). |
 | `fly-deploy.yml` | `workflow_dispatch`, and `push` to the default branch | Deploy the default branch's tip to Fly with `--build-arg GIT_SHA=<commit>`, then wait until the health check answers with that commit. `deploy-on: manual` deploys only on `workflow_dispatch`; `merge` also on each push to the default branch. Refuses a commit that is not the branch's tip. |
 | `swiftpm-cask-release.yml` | `push` of a version tag | Build a SwiftPM CLI, optionally sign + notarize it, attach the tarball to a release on the tap repo, bump the cask. |
-| `claude-plugin-ci.yml` | `pull_request` | Validate a Claude Code plugin manifest and its marketplace manifest. |
+| `claude-plugin-ci.yml` | `pull_request`, and `push` to the default branch | Validate a Claude Code plugin manifest and its marketplace manifest. On a `push` to the default branch, also [notifies mcknight.io](#notifying-mcknightio). |
 | `claude-plugin-release.yml` | `push` of a version tag | Validate both manifests, refuse a tag that disagrees with the plugin version, create the GitHub release. |
 | `github-release.yml` | `push` of a version tag | Create the GitHub release from the changelog section, optionally attaching files. For repos where tagging *is* the release. |
 
@@ -300,6 +300,41 @@ jobs:
       assets: Spoons/*.spoon.zip
 ```
 
+## Notifying mcknight.io
+
+Eight workflows end by asking
+[armcknight/mcknight.io](https://github.com/armcknight/mcknight.io) to refresh
+its projects page: a `repository_dispatch` with `event_type: release-published`
+and `client_payload.repository` set to the caller. It is opt-in. Without the
+`SITE_DISPATCH_TOKEN` secret the step prints a line and does nothing, so a
+caller that does not opt in needs no change.
+
+| Workflow | Notifies |
+|----------|----------|
+| `github-release.yml`, `swiftpm-cask-release.yml`, `macos-cask-release.yml`, `claude-plugin-release.yml` | After the release is published. |
+| `swift-package-ci.yml`, `ios-ci.yml`, `claude-plugin-ci.yml`, `vapor-ci.yml` | On a `push` to the default branch, after the checks pass. Never under `pull_request`. The caller must trigger on `push` to the default branch. |
+
+`ios-ci.yml` runs no tests on a `push`: there the notification is the only job.
+
+To opt in, set `SITE_DISPATCH_TOKEN` in the caller repo to a fine-grained PAT
+with Contents: read+write on `armcknight/mcknight.io`, and pass it to the
+reusable workflow. A reusable workflow sees only the secrets its caller passes,
+so the caller needs `secrets: inherit` or the secret by name:
+
+```yaml
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: armcknight/workflows/.github/workflows/github-release.yml@2
+    secrets:
+      SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+```
+
+`macos-cask-release.yml` and `ios-ci.yml` already need `secrets: inherit`, which
+passes it. A failed dispatch is a warning on the run, not a failure: the
+release or the merge has already happened.
+
 ## Running the steps outside Actions
 
 Every workflow here works as `vapor-ci.yml` and `fly-deploy.yml` do: the work
@@ -323,6 +358,7 @@ the path in `$SCRIPTS`.
 | `scripts/xcode/` | `prepare-env.sh`, `stamp-marketing-version.sh`, `export-app.sh` | `ios-ci.yml`, `macos-cask-release.yml` |
 | `scripts/signing/` | `install-match-key.sh`, `match-signing-identity.sh`, `sign-binaries.sh`, `notarize.sh` | `ios-ci.yml`, `macos-cask-release.yml`, `swiftpm-cask-release.yml` |
 | `scripts/release/` | `release-version.sh`, `source-version.sh`, `check-tag-version.sh`, `check-binaries.sh`, `cask-path.sh`, `bump-cask.sh`, `publish-github-release.sh` | `macos-cask-release.yml`, `swiftpm-cask-release.yml`, `github-release.yml`, `claude-plugin-release.yml` |
+| `scripts/site/` | `notify.sh` | the four release workflows, `swift-package-ci.yml`, `ios-ci.yml`, `claude-plugin-ci.yml`, `vapor-ci.yml` |
 
 For example, to re-sign a PR's staging link by hand:
 

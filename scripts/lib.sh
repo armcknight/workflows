@@ -11,6 +11,16 @@ error() {
   fi
 }
 
+# Prints a warning. On GitHub Actions it is a `::warning::` annotation, so it
+# shows on the run's summary; anywhere else it goes to stderr.
+warning() {
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    echo "::warning::$*"
+  else
+    echo "warning: $*" >&2
+  fi
+}
+
 # Appends a line of Markdown to the step summary on GitHub Actions. Anywhere
 # else it does nothing.
 summary() {

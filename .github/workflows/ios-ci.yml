@@ -25,10 +25,14 @@ name: iOS CI (reusable)
 # PR. That job also needs the caller to grant contents: write, because it pushes
 # the images to an orphan `ui-screenshots` branch.
 #
-# Under any event other than `pull_request` (a `/build-staging` comment, or the
-# refresh workflow's rebuild of an expired staging build), pass `pr-number`. The
-# Authorize job then checks the request, and the jobs check out that PR's head
-# instead of the triggering ref.
+# Optional: under a `push` to the default branch, with the SITE_DISPATCH_TOKEN
+# secret, it asks armcknight/mcknight.io to refresh its projects page. A push
+# runs nothing else here.
+#
+# Under any event other than `pull_request` or `push` (a `/build-staging`
+# comment, or the refresh workflow's rebuild of an expired staging build), pass
+# `pr-number`. The Authorize job then checks the request, and the jobs check out
+# that PR's head instead of the triggering ref.
 #
 # The command text is checked here, not in the caller: the caller runs this
 # workflow on every `issue_comment`, and every job is skipped, with no runner,
@@ -98,11 +102,13 @@ jobs:
   # install link, so check the request before any job checks the code out.
   #
   # The `if:` skips every other comment before a runner starts. A skipped
-  # Authorize skips Test and Stage too.
+  # Authorize skips Test and Stage too. A push only notifies mcknight.io (see
+  # Notify mcknight.io), so it skips them too.
   authorize:
     name: Authorize
     if: >
       github.event_name != 'pull_request' &&
+      github.event_name != 'push' &&
       (github.event_name != 'issue_comment' ||
        (github.event.issue.pull_request &&
         (startsWith(github.event.comment.body, '/build-staging') ||
@@ -460,3 +466,27 @@ jobs:
           echo "::error::The UI tests failed."
           exit 1
         fi
+
+  # On a push to the default branch, never under pull_request, ask mcknight.io
+  # to refresh its projects page. Without the SITE_DISPATCH_TOKEN secret it does
+  # nothing.
+  notify-site:
+    name: Notify mcknight.io
+    if: >
+      github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+    - name: Check out the scripts
+      uses: armcknight/workflows/.github/actions/scripts@main
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+
+    - name: Notify mcknight.io
+      env:
+        SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+      run: |
+        "$SCRIPTS/site/notify.sh"

@@ -23,6 +23,21 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **github-release**, **swiftpm-cask-release**, **macos-cask-release**,
+  **claude-plugin-release**, **swift-package-ci**, **ios-ci**,
+  **claude-plugin-ci**, **vapor-ci**: an optional last step that asks
+  armcknight/mcknight.io to refresh its projects page, with a
+  `repository_dispatch` of `event_type: release-published`. The release
+  workflows send it after the release is published; the CI workflows send it
+  from a new `notify-site` job, only on a `push` to the default branch, never
+  under `pull_request`. It runs only with the new optional `SITE_DISPATCH_TOKEN`
+  secret, which the caller passes with `secrets: inherit` or by name; without
+  it the step does nothing, so no caller change is needed. The script is
+  `scripts/site/notify.sh`. In **ios-ci**, the Authorize job now skips a
+  `push`, which it could never pass, so a push runs only the notification.
+
 ### Changed
 
 - **ios-ci**, **ota-refresh**, **ota-cleanup**, **macos-cask-release**,

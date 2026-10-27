@@ -69,6 +69,11 @@ on:
         type: string
         default: "."
 
+    secrets:
+      SITE_DISPATCH_TOKEN:
+        description: "Token with Contents: read+write on armcknight/mcknight.io. When set, a push to the default branch asks it to refresh its projects page. Empty (the default) skips that."
+        required: false
+
 permissions:
   contents: read
 
@@ -144,3 +149,31 @@ jobs:
           DOCKER_BUILD_ARGS: --cache-from type=gha --cache-to type=gha,mode=max
         run: |
           "$SCRIPTS/vapor/docker-build.sh"
+
+  # On a push to the default branch, never under pull_request, ask mcknight.io
+  # to refresh its projects page. Without the SITE_DISPATCH_TOKEN secret it does
+  # nothing.
+  notify-site:
+    name: Notify mcknight.io
+    needs: [build-and-test, docker]
+    if: >
+      !cancelled() &&
+      needs.build-and-test.result == 'success' &&
+      needs.docker.result != 'failure' &&
+      github.event_name == 'push' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # scripts/ at the commit of this workflow, out of the workspace, in $SCRIPTS.
+      - name: Check out the scripts
+        uses: armcknight/workflows/.github/actions/scripts@main
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+
+      - name: Notify mcknight.io
+        env:
+          SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+        run: |
+          "$SCRIPTS/site/notify.sh"
