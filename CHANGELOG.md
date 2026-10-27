@@ -23,6 +23,19 @@ edit a caller applies.
 
 ## [Unreleased]
 
+### Added
+
+- **github-release**: the optional `major-alias` input. Set it to `true` to
+  move the major alias tag that callers pin (`2` for the tag 2.1.0, `v1` for
+  v1.2.3) to the tag after a final release. It never moves for a release
+  candidate, refuses a tag the default branch does not contain, and leaves the
+  alias alone when a newer final release of the same major exists. The work is
+  in `scripts/release/move-major-alias.sh`. No caller change is needed: the
+  input is off by default.
+- This repository's own `release.yml` now calls `github-release.yml` with
+  `major-alias: true` in place of its copy of the two jobs, so every release
+  here goes through the shared workflow.
+
 ### Changed
 
 - **ios-ci**, **ota-refresh**, **ota-cleanup**, **macos-cask-release**,
