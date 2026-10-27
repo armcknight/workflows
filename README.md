@@ -45,7 +45,8 @@ wrap in an `install.html` landing page → emit a link) is done by the
 | `github-release.yml` | `push` of a version tag | Create the GitHub release from the changelog section, optionally attaching files. For repos where tagging *is* the release. |
 
 `ci.yml` and `release.yml` are this repo's **own** CI, not part of that list. They
-have no `workflow_call` trigger, so a caller cannot `uses:` them.
+have no `workflow_call` trigger, so a caller cannot `uses:` them. `release.yml`
+releases this repo with `github-release.yml`, as a caller does.
 
 S3 layout (one bucket, namespaced per project): `s3://<bucket>/<repo>/pr-<n>/run-<id>/`.
 
@@ -287,8 +288,13 @@ also takes `changelog` (optional, `CHANGELOG.md`) and `prerelease` (optional).
 
 `github-release.yml`: every input is optional — `changelog` (`CHANGELOG.md`),
 `assets` (whitespace-separated paths or globs to attach; nothing by default),
-`prerelease`, and `runs-on`. A tag with a prerelease suffix is marked a
-prerelease whether or not the input is set.
+`prerelease`, `major-alias`, and `runs-on`. A tag with a prerelease suffix is
+marked a prerelease whether or not the input is set. Set `major-alias: true` to
+also move the major alias tag (`2` for the tag 2.1.0, `v1` for v1.2.3) to a
+final release, as this repo's own release does. It never moves for a release
+candidate, refuses a tag the default branch does not contain, and stays put when
+a newer final release of the same major exists. It pushes the alias with the
+release's `contents: write` token, so it needs no other permission.
 
 ```yaml
 jobs:
@@ -357,7 +363,7 @@ the path in `$SCRIPTS`.
 | `scripts/swift-package/` | `cli-examples.sh` (with `cli-examples-commands.py`) | `swift-package-ci.yml` |
 | `scripts/xcode/` | `prepare-env.sh`, `stamp-marketing-version.sh`, `export-app.sh` | `ios-ci.yml`, `macos-cask-release.yml` |
 | `scripts/signing/` | `install-match-key.sh`, `match-signing-identity.sh`, `sign-binaries.sh`, `notarize.sh` | `ios-ci.yml`, `macos-cask-release.yml`, `swiftpm-cask-release.yml` |
-| `scripts/release/` | `release-version.sh`, `source-version.sh`, `check-tag-version.sh`, `check-binaries.sh`, `cask-path.sh`, `bump-cask.sh`, `publish-github-release.sh` | `macos-cask-release.yml`, `swiftpm-cask-release.yml`, `github-release.yml`, `claude-plugin-release.yml` |
+| `scripts/release/` | `release-version.sh`, `source-version.sh`, `check-tag-version.sh`, `check-binaries.sh`, `cask-path.sh`, `bump-cask.sh`, `publish-github-release.sh`, `move-major-alias.sh` | `macos-cask-release.yml`, `swiftpm-cask-release.yml`, `github-release.yml`, `claude-plugin-release.yml` |
 | `scripts/site/` | `notify.sh` | the four release workflows, `swift-package-ci.yml`, `ios-ci.yml`, `claude-plugin-ci.yml`, `vapor-ci.yml` |
 
 For example, to re-sign a PR's staging link by hand:
@@ -417,8 +423,9 @@ make deploy     # migrates [Unreleased] into the new section, tags, pushes
 `make deploy-beta` for an `-RC<n>` instead, to try a change against one app before
 every app gets it.
 
-Pushing the tag starts `release.yml` here. It publishes the GitHub release from
-the changelog section and moves the major alias. It refuses a tag that is not on
+Pushing the tag starts `release.yml` here, which calls this repo's own
+`github-release.yml` with `major-alias: true`. It publishes the GitHub release
+from the changelog section and moves the major alias. It refuses a tag that is not on
 `main`, and it leaves the alias alone when you cut a patch on an older line, so
 the alias never moves backwards.
 
