@@ -23,6 +23,8 @@ edit a caller applies.
 
 ## [Unreleased]
 
+## [4.3.0] 2026-11-17
+
 ### Added
 
 - **github-release**, **swiftpm-cask-release**, **macos-cask-release**,
